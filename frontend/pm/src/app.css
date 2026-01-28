@@ -1,0 +1,15 @@
+/* src/app.css */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Global Reset for Magnistruct Aesthetic */
+body {
+    @apply bg-slate-950 text-white font-sans antialiased;
+    overflow-x: hidden;
+}
+
+/* Swiss Typography Helpers */
+h1, h2, h3, h4, h5, h6 {
+    @apply font-display;
+}
