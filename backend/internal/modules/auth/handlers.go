@@ -23,14 +23,21 @@ type LoginRequest struct {
 	Password string `json:"password"`
 }
 
+// NEW: Struct to handle profile/theme updates
+type UpdateSettingsRequest struct {
+	Theme    string `json:"theme"`
+	JobTitle string `json:"job_title"`
+	Bio      string `json:"bio"`
+}
+
 type UserResponse struct {
 	ID       string `json:"id"`
 	Email    string `json:"email"`
 	FullName string `json:"full_name"`
 	Avatar   string `json:"avatar"`
-	JobTitle string `json:"job_title"` // <--- NEW
-	Bio      string `json:"bio"`       // <--- NEW
-	Theme    string `json:"theme"`     // <--- NEW
+	JobTitle string `json:"job_title"`
+	Bio      string `json:"bio"`
+	Theme    string `json:"theme"`
 }
 
 // --- HELPERS ---
@@ -121,10 +128,9 @@ func HandleMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var u UserResponse
-	// Updated Query to fetch new columns
 	query := `
 		SELECT u.id, u.email, u.full_name, COALESCE(u.avatar_url, ''), 
-		       COALESCE(u.job_title, ''), COALESCE(u.bio, ''), COALESCE(u.theme, 'system')
+		       COALESCE(u.job_title, ''), COALESCE(u.bio, ''), COALESCE(u.theme, 'aurora')
 		FROM sessions s
 		JOIN users u ON u.id = s.user_id
 		WHERE s.token = $1 AND s.expires_at > NOW()
@@ -157,4 +163,40 @@ func HandleLogout(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 	})
 	w.Write([]byte(`{"message": "Logged out"}`))
+}
+
+// NEW FUNCTION: Updates user theme and profile info
+func HandleUpdateSettings(w http.ResponseWriter, r *http.Request) {
+	c, err := r.Cookie("session_token")
+	if err != nil {
+		http.Error(w, "Not logged in", http.StatusUnauthorized)
+		return
+	}
+
+	var req UpdateSettingsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid Input", http.StatusBadRequest)
+		return
+	}
+
+	// 1. Get User ID from Session
+	var userID string
+	err = database.DB.QueryRow(r.Context(), "SELECT user_id FROM sessions WHERE token=$1 AND expires_at > NOW()", c.Value).Scan(&userID)
+	if err != nil {
+		http.Error(w, "Session invalid", http.StatusUnauthorized)
+		return
+	}
+
+	// 2. Update User in DB
+	// Note: We update job_title/bio here too as they are part of the settings vertical
+	_, err = database.DB.Exec(r.Context(),
+		"UPDATE users SET theme = $1, job_title = $2, bio = $3 WHERE id = $4",
+		req.Theme, req.JobTitle, req.Bio, userID)
+
+	if err != nil {
+		http.Error(w, "Failed to update settings", http.StatusInternalServerError)
+		return
+	}
+
+	w.Write([]byte(`{"message": "Settings updated"}`))
 }

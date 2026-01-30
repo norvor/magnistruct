@@ -1,166 +1,163 @@
 <script lang="ts">
     import { onMount } from 'svelte';
-    import { page } from '$app/stores'; // To check current URL
+    import { page } from '$app/stores';
     import { goto } from '$app/navigation';
     import { api } from '$lib/api';
     import { currentUser } from '$lib/stores/user';
-    import '../../app.css'; // Assuming you have Tailwind or global styles, otherwise remove
+    import GlassCard from '$lib/components/ui/GlassCard.svelte';
+    import '../../app.css';
 
-    let isLoading = true;
+    // Form State
+    let email = "";
+    let password = "";
+    let fullName = "";
+    let error = "";
+    let loading = false;
+    let authCheckDone = false;
 
-    // List of public routes that don't need the Sidebar/Auth check
+    // Derived State
     const publicRoutes = ['/login', '/register'];
-
+    
+    // Auth Check on Mount
     onMount(async () => {
-        // 1. Check if we are already on a public page
-        const isPublic = publicRoutes.includes($page.url.pathname);
+        const isPublic = publicRoutes.some(r => $page.url.pathname.startsWith(r));
 
         try {
-            // 2. Ask Backend: "Am I logged in?"
+            // Only check auth if we aren't sure yet
             const user = await api.auth.me();
-            
-            // 3. Success: Store user and show app
-            currentUser.set(user);
-            
-            // If we are on login page but actually logged in, go to dashboard
-            if (isPublic) goto('/'); 
-        } catch (e) {
-            // 4. Failure: User is NOT logged in
-            currentUser.set(null);
-            
-            // If trying to access private page, kick to login
-            if (!isPublic) {
-                goto('/login');
+            if (user) {
+                currentUser.set(user);
+                // If logged in, go to dashboard
+                if (isPublic) goto('/'); 
             }
+        } catch (e) {
+            // Not logged in - totally fine for register page
+            currentUser.set(null);
         } finally {
-            isLoading = false;
-            isAuthInitialized.set(true);
+            authCheckDone = true;
         }
     });
+
+    async function handleRegister() {
+        if (!email || !password || !fullName) {
+            error = "All fields are required.";
+            return;
+        }
+        
+        loading = true;
+        error = "";
+
+        try {
+            // 1. Register
+            await api.auth.register({ 
+                email, 
+                password, 
+                full_name: fullName 
+            });
+
+            // 2. Auto-Login (Optional, but nice UX)
+            await api.auth.login(email, password);
+            const user = await api.auth.me();
+            currentUser.set(user);
+            
+            // 3. Redirect
+            goto('/');
+            
+        } catch (e: any) {
+            console.error(e);
+            if (e.message.includes("409") || e.message.includes("Conflict")) {
+                error = "Email is already registered.";
+            } else {
+                error = "Registration failed. Please try again.";
+            }
+        } finally {
+            loading = false;
+        }
+    }
 </script>
 
-{#if isLoading}
-    <div class="loading-screen">
-        <div class="logo-loader">M</div>
-    </div>
-{:else if publicRoutes.includes($page.url.pathname)}
-    <slot />
-{:else if $currentUser}
-    <div class="magnistruct-shell">
-        
-        <div class="aurora-layer">
-            <div class="orb orb-1"></div>
-            <div class="orb orb-2"></div>
-            <div class="orb orb-3"></div>
-            <div class="noise-overlay"></div>
-        </div>
+<div class="auth-container">
+    <div class="auth-box">
+        <GlassCard>
+            <div class="inner">
+                <div class="header">
+                    <div class="logo">M</div>
+                    <h1>Initialize Identity</h1>
+                    <p>Join the Magnistruct network.</p>
+                </div>
 
-        <nav class="glass-sidebar">
-            <div class="brand">
-                <div class="logo-mark">M</div>
-                <span class="logo-type">MAGNISTRUCT</span>
-            </div>
+                <div class="form">
+                    {#if error}
+                        <div class="error-banner">{error}</div>
+                    {/if}
 
-            <div class="nav-group">
-                <a href="/" class="nav-item" class:active={$page.url.pathname === '/'}>
-                    <span class="icon">▣</span> Projects
-                </a>
-                <a href="/timeline" class="nav-item">
-                    <span class="icon">≈</span> Timeline
-                </a>
-                <a href="/settings" class="nav-item">
-                    <span class="icon">⚙</span> Settings
-                </a>
-            </div>
-
-            <div class="nav-footer">
-                <div class="user-pill">
-                    <div class="avatar">{$currentUser.full_name[0]}</div>
-                    <div class="user-meta">
-                        <span class="username">{$currentUser.full_name}</span>
-                        <span class="role">{$currentUser.job_title || 'Member'}</span>
+                    <div class="input-group">
+                        <label>Full Name</label>
+                        <input type="text" bind:value={fullName} placeholder="Jane Doe" />
                     </div>
+
+                    <div class="input-group">
+                        <label>Email Identifier</label>
+                        <input type="email" bind:value={email} placeholder="name@magnistruct.com" />
+                    </div>
+
+                    <div class="input-group">
+                        <label>Passcode</label>
+                        <input type="password" bind:value={password} placeholder="••••••••" />
+                    </div>
+
+                    <button on:click={handleRegister} disabled={loading}>
+                        {loading ? 'Processing...' : 'Create Account'}
+                    </button>
+                </div>
+                
+                <div class="footer">
+                    <a href="/login">Already have an identity? Connect →</a>
                 </div>
             </div>
-        </nav>
-
-        <main class="main-stage">
-            <slot />
-        </main>
+        </GlassCard>
     </div>
-{/if}
+</div>
 
 <style>
-    /* LOADING SCREEN */
-    .loading-screen { 
-        height: 100vh; width: 100vw; background: #020617; 
-        display: grid; place-items: center; 
-    }
-    .logo-loader {
-        width: 40px; height: 40px; background: white; color: black;
-        font-weight: 700; display: grid; place-items: center; border-radius: 8px;
-        animation: spin 1s infinite ease-in-out alternate;
-    }
-    @keyframes spin { from { opacity: 0.5; transform: scale(0.9); } to { opacity: 1; transform: scale(1.1); } }
-
-    /* LAYOUT GRID */
-    .magnistruct-shell {
-        display: grid;
-        grid-template-columns: 260px 1fr;
-        min-height: 100vh;
-        position: relative;
+    /* Reuse the exact styles from Login for consistency */
+    .auth-container {
+        height: 100vh; width: 100vw;
+        display: flex; align-items: center; justify-content: center;
+        background: radial-gradient(circle at 50% 10%, #1e293b 0%, #020617 100%);
     }
 
-    /* AURORA (Same as before) */
-    .aurora-layer {
-        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-        z-index: -1; overflow: hidden; pointer-events: none;
-        background: #020617;
-    }
-    .orb {
-        position: absolute; border-radius: 50%;
-        filter: blur(80px); opacity: 0.4;
-        animation: drift 20s infinite alternate ease-in-out;
-    }
-    .orb-1 { top: -10%; left: -10%; width: 50vw; height: 50vw; background: #2dd4bf; animation-duration: 25s; }
-    .orb-2 { bottom: -10%; right: -10%; width: 40vw; height: 40vw; background: #a855f7; animation-duration: 30s; }
-    .noise-overlay {
-        position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-        opacity: 0.03; background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='1'/%3E%3C/svg%3E");
-    }
+    .auth-box { width: 100%; max-width: 420px; padding: 20px; }
+    
+    .inner { padding: 40px; display: flex; flex-direction: column; gap: 32px; }
 
-    /* GLASS SIDEBAR */
-    .glass-sidebar {
-        background: rgba(2, 6, 23, 0.4);
-        backdrop-filter: blur(20px);
-        border-right: 1px solid rgba(255,255,255,0.05);
-        padding: 32px 24px;
-        display: flex; flex-direction: column; gap: 40px;
+    .header { text-align: center; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+    .logo { width: 48px; height: 48px; background: white; color: black; font-weight: 700; border-radius: 12px; display: grid; place-items: center; font-size: 1.5rem; font-family: 'Space Grotesk'; }
+    h1 { margin: 0; font-size: 1.8rem; letter-spacing: -0.5px; }
+    p { margin: 0; color: #94a3b8; font-size: 0.9rem; line-height: 1.5; }
+
+    .form { display: flex; flex-direction: column; gap: 20px; }
+    
+    .input-group { display: flex; flex-direction: column; gap: 8px; }
+    label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 1px; color: #64748b; font-weight: 700; }
+    
+    input {
+        background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1);
+        padding: 14px; border-radius: 8px; color: white; font-family: 'Inter'; font-size: 1rem; outline: none; transition: 0.2s;
     }
+    input:focus { border-color: #2dd4bf; background: rgba(45, 212, 191, 0.05); }
 
-    .brand { display: flex; align-items: center; gap: 12px; }
-    .logo-mark { width: 32px; height: 32px; background: white; color: black; font-weight: 700; display: grid; place-items: center; border-radius: 8px; font-family: 'Space Grotesk'; }
-    .logo-type { font-weight: 700; letter-spacing: 1px; font-size: 0.9rem; opacity: 0.9; font-family: 'Space Grotesk'; }
-
-    .nav-group { display: flex; flex-direction: column; gap: 8px; flex: 1; }
-    .nav-item {
-        display: flex; align-items: center; gap: 12px; padding: 10px 12px;
-        color: #94a3b8; text-decoration: none; font-size: 0.9rem; font-weight: 500;
-        border-radius: 8px; transition: 0.2s;
+    button {
+        background: white; color: black; border: none;
+        padding: 14px; border-radius: 8px;
+        font-weight: 600; cursor: pointer; font-size: 1rem; transition: 0.2s; margin-top: 10px;
     }
-    .nav-item:hover { background: rgba(255, 255, 255, 0.05); color: white; }
-    .nav-item.active { background: rgba(255, 255, 255, 0.1); color: white; }
-    .icon { width: 20px; text-align: center; }
+    button:hover { transform: translateY(-2px); box-shadow: 0 0 20px rgba(255,255,255,0.2); }
+    button:disabled { opacity: 0.7; cursor: not-allowed; }
 
-    .nav-footer { border-top: 1px solid rgba(255,255,255,0.05); padding-top: 20px; }
-    .user-pill { display: flex; align-items: center; gap: 12px; }
-    .avatar {
-        width: 32px; height: 32px; background: linear-gradient(135deg, #a855f7, #ec4899);
-        border-radius: 50%; display: grid; place-items: center; font-weight: bold; font-size: 0.8rem;
-    }
-    .user-meta { display: flex; flex-direction: column; }
-    .username { font-size: 0.85rem; font-weight: 600; }
-    .role { font-size: 0.7rem; color: #64748b; }
+    .error-banner { background: rgba(239, 68, 68, 0.1); color: #fca5a5; padding: 10px; border-radius: 6px; font-size: 0.85rem; text-align: center; border: 1px solid rgba(239, 68, 68, 0.2); }
 
-    .main-stage { padding: 40px 60px; overflow-y: auto; }
+    .footer { text-align: center; }
+    a { color: #94a3b8; text-decoration: none; font-size: 0.9rem; transition: 0.2s; }
+    a:hover { color: white; }
 </style>

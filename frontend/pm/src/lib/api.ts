@@ -1,13 +1,21 @@
-const BASE_URL = 'http://localhost:8080';
+import { writable } from 'svelte/store';
 
-// --- TYPES ---
+const API_BASE = 'http://localhost:8080/api';
+
+// --- TYPES (Linear-Grade) ---
+
 export interface User {
     id: string;
     email: string;
     full_name: string;
-    avatar: string;
-    job_title: string;
-    theme: 'dark' | 'light' | 'system';
+    job_title?: string;
+    theme?: 'aurora' | 'cloudy';
+}
+
+export interface UserSummary {
+    id: string;
+    full_name: string;
+    avatar?: string;
 }
 
 export interface Project {
@@ -17,61 +25,109 @@ export interface Project {
     created_at: string;
 }
 
+export interface Task {
+    id: string;
+    short_id: number;
+    column_id: string;
+    title: string;
+    description: string;
+    priority: 'p1' | 'p2' | 'p3' | 'p4';
+    due_date?: string;
+    position: number;
+    is_complete: boolean;
+    assignee?: UserSummary;
+}
+
+export interface Column {
+    id: string;
+    name: string;
+    position: number;
+    tasks: Task[];
+}
+
 export interface BoardData {
     project: Project;
-    columns: any[]; // Simplified for brevity
+    columns: Column[];
 }
 
-// --- REQUEST ENGINE ---
-async function request<T>(endpoint: string, method: string = 'GET', body?: any): Promise<T | null> {
-    const config: RequestInit = {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include', // CRITICAL: Sends Cookies
-        body: body ? JSON.stringify(body) : undefined,
+export interface Comment {
+    id: string;
+    task_id: string;
+    content: string;
+    created_at: string;
+    user: UserSummary;
+}
+
+// --- API CLIENT ---
+
+// frontend/pm/src/lib/api.ts
+
+async function fetchAPI<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+    const headers = {
+        'Content-Type': 'application/json',
+        ...options.headers as Record<string, string>
     };
 
-    try {
-        const res = await fetch(`${BASE_URL}${endpoint}`, config);
+    const config: RequestInit = {
+        ...options,
+        headers,
+        credentials: 'include'
+    };
 
-        // CASE 1: Auth Check (Silent Fail)
-        // If checking "Who am I?" and we get 401, just return null. Don't crash.
-        if (res.status === 401 && endpoint.includes('/auth/me')) {
-            return null;
-        }
+    const res = await fetch(`${API_BASE}${endpoint}`, config);
 
-        // CASE 2: Actual Unauthorized Access (Loud Fail)
-        // If trying to fetch data while logged out, throw error.
+    if (!res.ok) {
         if (res.status === 401) {
-            throw new Error('UNAUTHORIZED');
+            if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login') && !window.location.pathname.startsWith('/register')) {
+                window.location.href = '/login';
+            }
+            throw new Error('Unauthorized');
         }
-
-        if (!res.ok) {
-            const errorText = await res.text();
-            throw new Error(errorText || `API Error ${res.status}`);
-        }
-
-        if (res.status === 204) return null;
-
-        return await res.json();
-    } catch (err) {
-        console.error(`API Fail: ${method} ${endpoint}`, err);
-        throw err;
+        throw new Error(await res.text() || 'API Error');
     }
+
+    // --- FIX STARTS HERE ---
+    
+    // 1. Handle explicit "No Content"
+    if (res.status === 204) return {} as T;
+
+    // 2. Safely handle "Empty 200 OK" (The fix for your Delete bug)
+    const text = await res.text();
+    return text ? JSON.parse(text) : {} as T;
+    
+    // --- FIX ENDS HERE ---
 }
 
-// --- EXPORTS ---
 export const api = {
     auth: {
-        login: (email, password) => request('/auth/login', 'POST', { email, password }),
-        register: (email, password, full_name) => request('/auth/register', 'POST', { email, password, full_name }),
-        logout: () => request('/auth/logout', 'POST'),
-        me: () => request<User>('/auth/me'),
-        updateProfile: (data) => request('/auth/profile', 'PUT', data)
+        login: (creds: any) => fetchAPI<{ user: User }>('/auth/login', { method: 'POST', body: JSON.stringify(creds) }),
+        register: (data: any) => fetchAPI<{ user: User }>('/auth/register', { method: 'POST', body: JSON.stringify(data) }),
+        me: () => fetchAPI<User>('/auth/me'),
+        logout: () => fetchAPI('/auth/logout', { method: 'POST' }),
+        updateProfile: (data: Partial<User>) => fetchAPI('/auth/profile', { method: 'PUT', body: JSON.stringify(data) }),
     },
     projects: {
-        list: () => request<Project[]>('/pm/projects'),
-        create: (name, description) => request<Project>('/pm/projects', 'POST', { name, description }),
-        getBoard: (id) => request<BoardData>(`/pm/projects/${id}/board`),
+        list: () => fetchAPI<Project[]>('/projects'),
+        create: (data: { name: string, description: string }) => fetchAPI<Project>('/projects', { method: 'POST', body: JSON.stringify(data) }),
+        getBoard: (id: string) => fetchAPI<BoardData>(`/projects/${id}/board`),
+        createColumn: (projectId: string, name: string) => fetchAPI<{ id: string, name: string }>(`/projects/${projectId}/columns`, { method: 'POST', body: JSON.stringify({ name }) }),
+    },
+    tasks: {
+        create: (projectId: string, data: { column_id: string, title: string, assignee_id?: string }) => 
+            fetchAPI<Task>(`/projects/${projectId}/tasks`, { method: 'POST', body: JSON.stringify(data) }),
+        
+        update: (taskId: string, data: Partial<Task> & { assignee_id?: string }) => 
+            fetchAPI(`/tasks/${taskId}`, { method: 'PUT', body: JSON.stringify(data) }),
+            
+        move: (taskId: string, data: { new_column_id: string, new_position: number }) => 
+            fetchAPI(`/tasks/${taskId}/move`, { method: 'PUT', body: JSON.stringify(data) }),
+            
+        toggle: (taskId: string) => fetchAPI(`/tasks/${taskId}/toggle`, { method: 'PUT' }),
+        delete: (taskId: string) => fetchAPI(`/tasks/${taskId}`, { method: 'DELETE' }),
+
+        // Comments
+        getComments: (taskId: string) => fetchAPI<Comment[]>(`/tasks/${taskId}/comments`),
+        postComment: (taskId: string, data: { content: string, user_id: string }) => 
+            fetchAPI<Comment>(`/tasks/${taskId}/comments`, { method: 'POST', body: JSON.stringify(data) })
     }
 };

@@ -35,14 +35,25 @@ func Init() {
 	-- 3. TASKS (The Unit of Work)
 	CREATE TABLE IF NOT EXISTS tasks (
 		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		
+		-- Human Readable ID (e.g. "Task-12")
+		short_id SERIAL, 
+
+		-- Ownership & Context
 		project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
 		column_id UUID NOT NULL REFERENCES columns(id) ON DELETE CASCADE,
 		
+		-- People (Collaboration Layer)
+		assignee_id UUID REFERENCES users(id) ON DELETE SET NULL,
+		reporter_id UUID REFERENCES users(id) ON DELETE SET NULL,
+		
+		-- Content
 		title TEXT NOT NULL,
 		description TEXT,
 		priority TEXT DEFAULT 'p4', -- p1 (High) to p4 (None)
 		due_date TIMESTAMPTZ,
 		
+		-- State
 		position DOUBLE PRECISION NOT NULL DEFAULT 65535,
 		is_complete BOOLEAN DEFAULT FALSE,
 		
@@ -50,14 +61,27 @@ func Init() {
 		updated_at TIMESTAMPTZ DEFAULT NOW()
 	);
 
-	-- 4. PERFORMANCE INDEXES (Crucial for Speed)
+	-- 4. COMMENTS (The Communication Layer)
+	CREATE TABLE IF NOT EXISTS task_comments (
+		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+		user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		content TEXT NOT NULL,
+		created_at TIMESTAMPTZ DEFAULT NOW(),
+		updated_at TIMESTAMPTZ DEFAULT NOW()
+	);
+
+	-- 5. PERFORMANCE INDEXES (Crucial for Speed)
 	CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
 	CREATE INDEX IF NOT EXISTS idx_tasks_column ON tasks(column_id);
-	CREATE INDEX IF NOT EXISTS idx_columns_project ON columns(project_id);
+	CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assignee_id);
+	CREATE INDEX IF NOT EXISTS idx_comments_task ON task_comments(task_id);
+	CREATE INDEX IF NOT EXISTS idx_tasks_short_id ON tasks(short_id);
 	`
 
+	// Execute the Schema
 	if _, err := database.DB.Exec(context.Background(), query); err != nil {
 		log.Fatalf("❌ PM Schema Error: %v", err)
 	}
-	fmt.Println("✅ PM System: Production Schema Loaded")
+	fmt.Println("✅ PM System: Production Schema Loaded (Linear-Grade)")
 }

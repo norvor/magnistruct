@@ -3,97 +3,129 @@ package pm
 import (
 	"encoding/json"
 	"net/http"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/norvor/magnistruct/backend/internal/database"
 )
 
-// --- SOPHISTICATED MODELS ---
+// Board Data Structures
 
-type BoardView struct {
-	Project Project      `json:"project"`
-	Columns []ColumnView `json:"columns"`
+type BoardColumn struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Position int    `json:"position"`
+	Tasks    []Task `json:"tasks"`
 }
 
-type ColumnView struct {
-	ID       string  `json:"id"`
-	Name     string  `json:"name"`
-	Position float64 `json:"position"`
-	Tasks    []Task  `json:"tasks"`
+type BoardData struct {
+	Project Project       `json:"project"`
+	Columns []BoardColumn `json:"columns"`
 }
 
-type Task struct {
-	ID          string     `json:"id"`
-	ColumnID    string     `json:"column_id"`
-	Title       string     `json:"title"`
-	Description string     `json:"description"`
-	Priority    string     `json:"priority"`
-	DueDate     *time.Time `json:"due_date"`
-	Position    float64    `json:"position"`
-	IsComplete  bool       `json:"is_complete"`
-}
-
-type MoveTaskRequest struct {
-	TaskID      string  `json:"task_id"`
-	NewColumnID string  `json:"new_column_id"`
-	NewPosition float64 `json:"new_position"` // Frontend calculates the mid-point float
-}
-
-// --- HANDLERS ---
-
-// HandleGetBoard: The "Asana Load" - Fetches everything for a project in 1 fast query structure
+// HandleGetBoard: The Heavy Lifter
+// Fetches the Project, All Columns, and All Tasks (nested) in one go.
 func HandleGetBoard(w http.ResponseWriter, r *http.Request) {
 	projectID := chi.URLParam(r, "projectID")
 
-	// 1. Get Project Details
+	// 1. Fetch Project Details
 	var p Project
-	err := database.DB.QueryRow(r.Context(), "SELECT id, name, description FROM projects WHERE id=$1", projectID).
-		Scan(&p.ID, &p.Name, &p.Description)
+	err := database.DB.QueryRow(r.Context(),
+		"SELECT id, name, description, created_at FROM projects WHERE id = $1",
+		projectID).Scan(&p.ID, &p.Name, &p.Description, &p.CreatedAt)
+
 	if err != nil {
 		http.Error(w, "Project not found", http.StatusNotFound)
 		return
 	}
 
-	// 2. Get Columns
-	rows, _ := database.DB.Query(r.Context(), "SELECT id, name, position FROM columns WHERE project_id=$1 ORDER BY position ASC", projectID)
+	// 2. Fetch Columns (Ordered by Position)
+	rows, err := database.DB.Query(r.Context(),
+		"SELECT id, name, position FROM columns WHERE project_id = $1 ORDER BY position ASC",
+		projectID)
+	if err != nil {
+		http.Error(w, "Failed to load columns", http.StatusInternalServerError)
+		return
+	}
 	defer rows.Close()
 
-	colMap := make(map[string]*ColumnView)
-	var columns []ColumnView
+	// Initialize as empty slice (not nil) so JSON is "[]" not "null"
+	columns := []BoardColumn{}
+	columnMap := make(map[string]*BoardColumn)
 
 	for rows.Next() {
-		var c ColumnView
-		rows.Scan(&c.ID, &c.Name, &c.Position)
-		c.Tasks = []Task{} // Initialize empty slice
-		columns = append(columns, c)
-		// Store pointer to update tasks later
-		colMap[c.ID] = &columns[len(columns)-1]
+		var c BoardColumn
+		c.Tasks = []Task{} // Important: Init empty tasks array
+		if err := rows.Scan(&c.ID, &c.Name, &c.Position); err == nil {
+			columns = append(columns, c)
+		}
 	}
 
-	// 3. Get Tasks (All tasks for this project in one go)
-	tRows, _ := database.DB.Query(r.Context(),
-		"SELECT id, column_id, title, description, priority, due_date, position, is_complete FROM tasks WHERE project_id=$1 ORDER BY position ASC",
-		projectID)
+	// Create a map pointers to columns for O(1) task insertion
+	// We need to loop over the slice indices to get pointers to the actual data
+	for i := range columns {
+		columnMap[columns[i].ID] = &columns[i]
+	}
+
+	// 3. Fetch Tasks (With Assignees!)
+	// We use COALESCE on description to safely handle nulls
+	taskQuery := `
+		SELECT 
+			t.id, t.short_id, t.column_id, t.title, COALESCE(t.description, ''), 
+			t.priority, t.due_date, t.position, t.is_complete,
+			u.id, u.full_name
+		FROM tasks t
+		LEFT JOIN users u ON t.assignee_id = u.id
+		WHERE t.project_id = $1
+		ORDER BY t.position ASC
+	`
+
+	tRows, err := database.DB.Query(r.Context(), taskQuery, projectID)
+	if err != nil {
+		http.Error(w, "Failed to load tasks", http.StatusInternalServerError)
+		return
+	}
 	defer tRows.Close()
 
 	for tRows.Next() {
 		var t Task
-		tRows.Scan(&t.ID, &t.ColumnID, &t.Title, &t.Description, &t.Priority, &t.DueDate, &t.Position, &t.IsComplete)
+		var uID, uName *string // Nullable scan targets
 
-		// Assign task to correct column in memory
-		if col, ok := colMap[t.ColumnID]; ok {
+		err := tRows.Scan(
+			&t.ID, &t.ShortID, &t.ColumnID, &t.Title, &t.Description,
+			&t.Priority, &t.DueDate, &t.Position, &t.IsComplete,
+			&uID, &uName,
+		)
+
+		if err != nil {
+			continue // Skip bad rows
+		}
+
+		// If Assignee exists, build the object
+		if uID != nil && uName != nil {
+			t.Assignee = &UserSummary{
+				ID:       *uID,
+				FullName: *uName,
+			}
+		}
+
+		// Find the column and append the task
+		if col, exists := columnMap[t.ColumnID]; exists {
 			col.Tasks = append(col.Tasks, t)
 		}
 	}
 
-	// 4. Return the Tree
-	response := BoardView{Project: p, Columns: columns}
+	// 4. Return the Aggregated Data
+	response := BoardData{
+		Project: p,
+		Columns: columns,
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }
 
-// HandleCreateColumn: Add a new "Section" to the board
+// --- Helper Handlers for Columns ---
+
 func HandleCreateColumn(w http.ResponseWriter, r *http.Request) {
 	projectID := chi.URLParam(r, "projectID")
 	var req struct {
@@ -101,32 +133,18 @@ func HandleCreateColumn(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewDecoder(r.Body).Decode(&req)
 
-	// Auto-position at the end (find max pos + 1000)
-	var maxPos float64
+	// Get max position
+	var maxPos int
 	database.DB.QueryRow(r.Context(), "SELECT COALESCE(MAX(position), 0) FROM columns WHERE project_id=$1", projectID).Scan(&maxPos)
 
-	var id string
-	database.DB.QueryRow(r.Context(),
-		"INSERT INTO columns (project_id, name, position) VALUES ($1, $2, $3) RETURNING id",
-		projectID, req.Name, maxPos+10000).Scan(&id)
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"id": id, "name": req.Name})
-}
-
-// HandleMoveTask: The Drag & Drop Logic
-func HandleMoveTask(w http.ResponseWriter, r *http.Request) {
-	var req MoveTaskRequest
-	json.NewDecoder(r.Body).Decode(&req)
-
-	// Atomic Update
-	_, err := database.DB.Exec(r.Context(),
-		"UPDATE tasks SET column_id=$1, position=$2, updated_at=NOW() WHERE id=$3",
-		req.NewColumnID, req.NewPosition, req.TaskID)
+	var c BoardColumn
+	err := database.DB.QueryRow(r.Context(),
+		"INSERT INTO columns (project_id, name, position) VALUES ($1, $2, $3) RETURNING id, name",
+		projectID, req.Name, maxPos+10000).Scan(&c.ID, &c.Name)
 
 	if err != nil {
-		http.Error(w, "Move failed", http.StatusInternalServerError)
+		http.Error(w, "Failed to create column", http.StatusInternalServerError)
 		return
 	}
-	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(c)
 }

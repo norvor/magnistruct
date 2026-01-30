@@ -16,13 +16,14 @@
         isSubmitting = true;
 
         try {
-            // Using the centralized API
-            const newProject = await api.projects.create(name, description);
+            // FIX: Pass arguments as an object to match api.ts interface
+            const newProject = await api.projects.create({ name, description });
             
             dispatch('created', newProject);
             close();
         } catch (e) {
             console.error("Creation failed", e);
+            // Optional: Add an alert or error state here
         } finally {
             isSubmitting = false;
         }
@@ -45,12 +46,20 @@
                     
                     <div class="input-group">
                         <label>Codename</label>
-                        <input type="text" bind:value={name} placeholder="e.g. Project Manhattan" autofocus>
+                        <input 
+                            type="text" 
+                            bind:value={name} 
+                            placeholder="e.g. Project Manhattan" 
+                            autofocus
+                        >
                     </div>
 
                     <div class="input-group">
                         <label>Brief</label>
-                        <textarea bind:value={description} placeholder="Protocol description..."></textarea>
+                        <textarea 
+                            bind:value={description} 
+                            placeholder="Protocol description..."
+                        ></textarea>
                     </div>
 
                     <div class="actions">
@@ -72,7 +81,10 @@
         background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);
         z-index: 100; display: flex; align-items: center; justify-content: center;
     }
-    .modal-content { width: 100%; max-width: 500px; padding: 20px; animation: slideUp 0.3s cubic-bezier(0.2, 0.8, 0.2, 1); }
+    .modal-content { 
+        width: 100%; max-width: 500px; padding: 20px; 
+        animation: slideUp 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
     
     .inner { padding: 32px; display: flex; flex-direction: column; gap: 24px; }
     h2 { margin: 0; font-size: 1.5rem; }
@@ -81,7 +93,8 @@
     label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; color: #94a3b8; font-weight: 700; }
     
     input, textarea {
-        background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1);
+        background: rgba(0,0,0,0.2);
+        border: 1px solid rgba(255,255,255,0.1);
         padding: 12px; border-radius: 8px; color: white; font-family: 'Inter'; font-size: 1rem;
         outline: none; transition: 0.2s; resize: none;
     }

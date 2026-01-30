@@ -26,9 +26,10 @@ func main() {
 	database.Connect()
 	defer database.Close()
 
-	// 3. Initialize Module Tables (Run Migrations)
-	pm.Init()   // Creates Projects, Tasks, Columns tables
-	auth.Init() // Creates Users, Sessions tables
+	// 3. Initialize Module Tables
+	// Note: setup.go in 'pm' package now handles all PM tables including comments
+	auth.Init()
+	pm.Init()
 
 	// 4. Setup Router
 	r := chi.NewRouter()
@@ -37,14 +38,13 @@ func main() {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 
-	// CORS: CRITICAL for Auth
-	// We must allow the frontend origin explicitly to support Cookies (Credentials)
+	// CORS: Allow Frontend
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{"http://localhost:5173"}, // The SvelteKit Port
+		AllowedOrigins:   []string{"http://localhost:5173"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
 		ExposedHeaders:   []string{"Link"},
-		AllowCredentials: true, // Required for HTTP-Only Cookies
+		AllowCredentials: true,
 		MaxAge:           300,
 	}))
 
@@ -52,36 +52,46 @@ func main() {
 		w.Write([]byte("Magnistruct Systems Online 🟢"))
 	})
 
-	// --- PUBLIC ROUTES (Auth) ---
-	r.Post("/auth/register", auth.HandleRegister)
-	r.Post("/auth/login", auth.HandleLogin)
-	r.Post("/auth/logout", auth.HandleLogout)
-	r.Get("/auth/me", auth.HandleMe) // Check current session
+	// --- API v1 ROUTES ---
+	r.Route("/api", func(r chi.Router) {
 
-	// --- PROTECTED ROUTES (PM Module) ---
-	// All routes inside this Group require a valid Login Cookie
-	r.Group(func(r chi.Router) {
-		r.Use(auth.Middleware) // The Gatekeeper
+		// PUBLIC AUTH
+		r.Post("/auth/register", auth.HandleRegister)
+		r.Post("/auth/login", auth.HandleLogin)
+		r.Post("/auth/logout", auth.HandleLogout)
+		r.Get("/auth/me", auth.HandleMe)
 
-		r.Put("/auth/profile", auth.HandleUpdateProfile)
+		// PROTECTED MODULES
+		r.Group(func(r chi.Router) {
+			r.Use(auth.Middleware)
 
-		r.Route("/pm", func(r chi.Router) {
+			// User Profile
+			r.Put("/auth/profile", auth.HandleUpdateProfile)
+
+			// --- PM MODULE ---
+
 			// Projects
 			r.Get("/projects", pm.HandleListProjects)
 			r.Post("/projects", pm.HandleCreateProject)
-
-			// The Board (Kanban Data)
 			r.Get("/projects/{projectID}/board", pm.HandleGetBoard)
-
-			// Columns
 			r.Post("/projects/{projectID}/columns", pm.HandleCreateColumn)
+			r.Post("/projects/{projectID}/tasks", pm.HandleCreateTask)
 
 			// Tasks
-			r.Post("/projects/{projectID}/tasks", pm.HandleCreateTask)
-			r.Put("/tasks/{taskID}", pm.HandleUpdateTask)        // Edit Title/Desc
-			r.Put("/tasks/{taskID}/toggle", pm.HandleToggleTask) // Check off
-			r.Delete("/tasks/{taskID}", pm.HandleDeleteTask)     // Delete
-			r.Post("/tasks/move", pm.HandleMoveTask)             // Drag & Drop
+			r.Route("/tasks/{taskID}", func(r chi.Router) {
+				r.Put("/", pm.HandleUpdateTask)       // General Update
+				r.Put("/toggle", pm.HandleToggleTask) // Checkbox
+				r.Delete("/", pm.HandleDeleteTask)    // Archive/Delete
+
+				// Re-ordering (Drag & Drop)
+				// Note: Board.go handler currently reads task_id from body,
+				// but this route structure is cleaner for the API.
+				r.Put("/move", pm.HandleMoveTask)
+
+				// Conversation Layer (New)
+				r.Get("/comments", pm.HandleListComments)
+				r.Post("/comments", pm.HandleCreateComment)
+			})
 		})
 	})
 
