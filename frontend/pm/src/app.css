@@ -7,25 +7,25 @@
 
 :root {
     /* --- AURORA (Dark/Default) --- */
-    --bg-main: #020617; /* Deep Slate */
-    --sidebar-bg: rgba(2, 6, 23, 0.8); /* Less transparent sidebar */
+    --bg-main: #000000; /* Shifted to True Black for Swiss feel */
+    --sidebar-bg: rgba(10, 10, 10, 0.8);
     
-    --text-primary: #f8fafc;
-    --text-secondary: #94a3b8; 
-    --text-tertiary: #475569;
+    --text-primary: #f5f5f7; /* Apple Off-White */
+    --text-secondary: #86868b; 
+    --text-tertiary: #56565c;
 
     /* High-Vis Structure Tokens (Dark) */
-    --glass-bg: rgba(15, 23, 42, 0.6);
-    --glass-border: rgba(255, 255, 255, 0.1); /* Crisper borders */
+    --glass-bg: rgba(28, 28, 30, 0.65); /* Apple Dark Glass */
+    --glass-border: rgba(255, 255, 255, 0.1); 
     --glass-highlight: rgba(255, 255, 255, 0.05);
 
-    --card-bg: rgba(30, 41, 59, 0.4); /* Semi-solid plate for cards */
+    --card-bg: rgba(28, 28, 30, 0.6); 
     --card-border: rgba(255, 255, 255, 0.1);
-    --column-bg: rgba(0, 0, 0, 0.25); /* Darker track for columns */
-    --list-hover: rgba(255, 255, 255, 0.05);
+    --column-bg: rgba(0, 0, 0, 0); 
+    --list-hover: rgba(255, 255, 255, 0.08);
 
     /* Form Elements */
-    --input-bg: rgba(2, 6, 23, 0.5);
+    --input-bg: rgba(28, 28, 30, 0.5);
     --input-border: rgba(255, 255, 255, 0.15);
     --input-text: #ffffff;
     --input-placeholder: #64748b;
@@ -34,53 +34,89 @@
     --orb-1-color: #2dd4bf;
     --orb-2-color: #a855f7;
     --accent-gradient: linear-gradient(135deg, #a855f7, #ec4899);
+
+    /* --- SWISS / APPLE DESIGN SYSTEM (Dark) --- */
+    --swiss-bg: #000000;
+    --swiss-glass: rgba(28, 28, 30, 0.65);
+    --swiss-glass-border: rgba(255, 255, 255, 0.12);
+    --swiss-text-primary: #ffffff;
+    --swiss-text-secondary: #86868b;
+    --swiss-text-tertiary: #56565c;
+    
+    --swiss-radius: 16px; /* Squircle */
+    --swiss-radius-sm: 10px;
+    
+    --swiss-accent: #0a84ff; /* Apple Blue */
+    --swiss-danger: #ff453a; /* Apple Red */
+    --swiss-success: #30d158; /* Apple Green */
+    --swiss-warn: #ffd60a;   /* Apple Yellow */
+    
+    --font-swiss: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
 [data-theme="cloudy"] {
     /* --- CLOUDY (Light) --- */
-    --bg-main: #f8fafc; /* Slate 50 - Crisp White/Grey */
-    --sidebar-bg: #ffffff; /* Solid sidebar for cleanliness */
+    --bg-main: #f5f5f7; /* Apple Light Grey Background */
+    --sidebar-bg: #ffffff;
 
-    --text-primary: #0f172a;   /* Slate 900 */
-    --text-secondary: #475569; /* Slate 600 */
-    --text-tertiary: #94a3b8;  /* Slate 400 */
+    --text-primary: #1d1d1f;   /* Apple Near-Black */
+    --text-secondary: #86868b; 
+    --text-tertiary: #aeaeb2;  
 
     /* High-Vis Structure Tokens (Light) */
-    --glass-bg: #ffffff;
-    --glass-border: #cbd5e1; /* Slate 300 - Distinct borders */
+    --glass-bg: rgba(255, 255, 255, 0.7);
+    --glass-border: rgba(0, 0, 0, 0.08); 
     --glass-highlight: rgba(0, 0, 0, 0.04);
 
-    --card-bg: #ffffff; /* Solid white cards */
-    --card-border: #e2e8f0; /* Slate 200 */
-    --column-bg: #f1f5f9; /* Slate 100 - The classic "Asana Grey" track */
-    --list-hover: #f1f5f9;
+    --card-bg: #ffffff; 
+    --card-border: rgba(0, 0, 0, 0.08); /* Softer borders */
+    --column-bg: transparent;
+    --list-hover: rgba(0, 0, 0, 0.04);
 
     /* Form Elements */
     --input-bg: #ffffff;
-    --input-border: #cbd5e1;
-    --input-text: #0f172a;
-    --input-placeholder: #94a3b8;
+    --input-border: #d1d1d6;
+    --input-text: #1d1d1f;
+    --input-placeholder: #86868b;
 
     /* Orb Colors (Subtler) */
-    --orb-1-color: #bae6fd; /* Sky 200 */
-    --orb-2-color: #e2e8f0; /* Slate 200 */
+    --orb-1-color: #bae6fd; 
+    --orb-2-color: #e2e8f0; 
     --accent-gradient: linear-gradient(135deg, #0ea5e9, #6366f1);
+
+    /* --- SWISS / APPLE DESIGN SYSTEM (Light Override) --- */
+    --swiss-bg: #f5f5f7;
+    --swiss-glass: rgba(255, 255, 255, 0.8);
+    --swiss-glass-border: rgba(0, 0, 0, 0.08);
+    --swiss-text-primary: #1d1d1f;
+    --swiss-text-secondary: #6e6e73;
+    --swiss-text-tertiary: #86868b;
+    
+    --swiss-accent: #007aff; /* Slightly darker blue for white bg */
+    --swiss-danger: #ff3b30;
+    --swiss-success: #34c759;
+    --swiss-warn: #ffcc00;
 }
 
 /* GLOBAL RESETS */
 body {
-    font-family: 'Inter', sans-serif; /* Use Inter for UI readability */
+    font-family: var(--font-swiss);
     background: var(--bg-main);
     color: var(--text-primary);
     margin: 0;
     overflow: hidden;
     transition: background-color 0.3s ease, color 0.3s ease;
+    -webkit-font-smoothing: antialiased; /* Critical for that "Apple" font look */
 }
 
 /* Headings use the Display Font */
 h1, h2, h3, h4, h5, h6, .brand-text, .id-badge {
     font-family: 'Space Grotesk', sans-serif;
 }
+
+/* GLOBAL UTILITIES */
+.scroll-hide::-webkit-scrollbar { display: none; }
+.scroll-hide { -ms-overflow-style: none; scrollbar-width: none; }
 
 /* SHARED LAYOUT STYLES */
 .magnistruct-shell { display: flex; height: 100vh; width: 100vw; position: relative; overflow: hidden; }
@@ -103,7 +139,8 @@ h1, h2, h3, h4, h5, h6, .brand-text, .id-badge {
 /* Utility: Glass Panel (Used for Modals/Floating Elements) */
 .glass-panel { 
     background: var(--glass-bg); 
-    backdrop-filter: blur(16px); 
+    backdrop-filter: blur(20px); /* Increased blur for premium feel */
+    -webkit-backdrop-filter: blur(20px);
     border: 1px solid var(--glass-border); 
-    box-shadow: 0 4px 30px rgba(0, 0, 0, 0.05); 
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08); 
 }

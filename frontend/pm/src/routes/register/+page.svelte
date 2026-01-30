@@ -48,20 +48,16 @@
         error = "";
 
         try {
-            // 1. Register
+            // 1. Register Only
             await api.auth.register({ 
                 email, 
                 password, 
                 full_name: fullName 
             });
 
-            // 2. Auto-Login (Optional, but nice UX)
-            await api.auth.login(email, password);
-            const user = await api.auth.me();
-            currentUser.set(user);
-            
-            // 3. Redirect
-            goto('/');
+            // 2. Redirect to Login Page (Skip Auto-Login)
+            // This forces the user to type their creds, ensuring the DB is ready
+            goto('/login');
             
         } catch (e: any) {
             console.error(e);

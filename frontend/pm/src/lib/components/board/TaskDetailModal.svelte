@@ -21,9 +21,12 @@
     $: if (task) {
         title = task.title;
         description = task.description || '';
-        priority = task.priority;
-        // Format Date for Input (YYYY-MM-DD)
-        dueDate = task.due_date ? new Date(task.due_date).toISOString().split('T')[0] : '';
+        
+        // --- NEW: Read from Classic Engine Data ---
+        if (task.classic) {
+            priority = task.classic.priority;
+            dueDate = task.classic.due_date ? new Date(task.classic.due_date).toISOString().split('T')[0] : '';
+        }
     }
 
     function close() {
@@ -36,21 +39,26 @@
         saveTimer = setTimeout(async () => {
             if (!task) return;
             
-            // Convert empty date string to null for backend
+            // Backend accepts flat JSON (it handles the split internally)
             const payload: any = { title, description, priority };
             if (dueDate) payload.due_date = new Date(dueDate).toISOString();
 
             try {
                 await api.tasks.update(task.id, payload);
                 
-                // Update Parent UI
-                dispatch('update', { 
+                // --- NEW: Construct Nested Object for Optimistic UI Update ---
+                const updatedTask = { 
                     ...task, 
                     title, 
-                    description, 
-                    priority,
-                    due_date: dueDate ? new Date(dueDate).toISOString() : undefined 
-                });
+                    description,
+                    classic: {
+                        ...task.classic!, // Keep existing classic data (column_id etc)
+                        priority,
+                        due_date: dueDate ? new Date(dueDate).toISOString() : undefined 
+                    }
+                };
+
+                dispatch('update', updatedTask);
             } catch (e) {
                 console.error("Auto-save failed", e);
             }
@@ -58,13 +66,20 @@
     }
 
     async function updateAssignee(userId: string) {
-        if (!task) return;
+        if (!task || !task.classic) return;
         try {
-            // If empty string, send null (unassign)
             await api.tasks.update(task.id, { assignee_id: userId || null });
             
             const user = members.find(m => m.id === userId);
-            const updatedTask = { ...task, assignee: user };
+            
+            // Nested Update
+            const updatedTask = { 
+                ...task, 
+                classic: {
+                    ...task.classic,
+                    assignee: user
+                }
+            };
             
             dispatch('update', updatedTask);
         } catch (e) {
@@ -80,7 +95,7 @@
         isDeleting = true;
         try {
             await api.tasks.delete(task.id);
-            dispatch('delete', task.id); // Tell parent to remove from board
+            dispatch('delete', task.id); 
             close();
         } catch (e) {
             console.error("Delete failed", e);
@@ -103,7 +118,7 @@
             
             <div class="modal-header">
                 <div class="breadcrumbs">
-                    <span class="id-badge">MAG-{task.short_id}</span>
+                    <span class="id-badge">MAG-{task.classic?.short_id ?? '...'}</span>
                 </div>
                 <div class="actions">
                     <button class="close-btn" on:click={close}>✕</button>
@@ -143,7 +158,7 @@
                         <label>Assignee</label>
                         <select 
                             class="clean-select" 
-                            value={task.assignee?.id || ''} 
+                            value={task.classic?.assignee?.id || ''} 
                             on:change={(e) => updateAssignee(e.currentTarget.value)}
                         >
                             <option value="">Unassigned</option>

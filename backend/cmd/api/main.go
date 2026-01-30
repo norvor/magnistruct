@@ -17,91 +17,66 @@ import (
 )
 
 func main() {
-	// 1. Load Environment Variables
 	if err := godotenv.Load(); err != nil {
-		log.Println("No .env file found, relying on system env")
+		log.Println("No .env file found")
 	}
 
-	// 2. Connect to Database
 	database.Connect()
-	defer database.Close()
 
-	// 3. Initialize Module Tables
-	// Note: setup.go in 'pm' package now handles all PM tables including comments
+	// INIT MODULES (Creates Tables)
 	auth.Init()
-	pm.Init()
+	pm.SetupRoutes() // (Rename this to pm.Init() if you want consistency)
 
-	// 4. Setup Router
 	r := chi.NewRouter()
-
-	// 5. Global Middleware
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 
-	// CORS: Allow Frontend
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{"http://localhost:5173"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
-		ExposedHeaders:   []string{"Link"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
 		AllowCredentials: true,
-		MaxAge:           300,
 	}))
 
-	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("Magnistruct Systems Online 🟢"))
-	})
-
-	// --- API v1 ROUTES ---
 	r.Route("/api", func(r chi.Router) {
 
-		// PUBLIC AUTH
-		r.Post("/auth/register", auth.HandleRegister)
-		r.Post("/auth/login", auth.HandleLogin)
-		r.Post("/auth/logout", auth.HandleLogout)
-		r.Get("/auth/me", auth.HandleMe)
+		// 1. AUTH MODULE (Handles /api/auth/login, /api/auth/me, etc.)
+		r.Route("/auth", auth.SetupRoutes)
 
-		// PROTECTED MODULES
+		// 2. PM MODULE (Needs Auth Middleware explicitly)
 		r.Group(func(r chi.Router) {
-			r.Use(auth.Middleware)
+			r.Use(auth.Middleware) // Protect everything below
 
-			// User Profile
-			r.Put("/auth/profile", auth.HandleUpdateProfile)
-
-			// --- PM MODULE ---
-
-			// Projects
 			r.Get("/projects", pm.HandleListProjects)
 			r.Post("/projects", pm.HandleCreateProject)
+
 			r.Get("/projects/{projectID}/board", pm.HandleGetBoard)
+			r.Put("/projects/{projectID}/engines", pm.HandleToggleEngine)
+
 			r.Post("/projects/{projectID}/columns", pm.HandleCreateColumn)
 			r.Post("/projects/{projectID}/tasks", pm.HandleCreateTask)
 
-			// Tasks
 			r.Route("/tasks/{taskID}", func(r chi.Router) {
-				r.Put("/", pm.HandleUpdateTask)       // General Update
-				r.Put("/toggle", pm.HandleToggleTask) // Checkbox
-				r.Delete("/", pm.HandleDeleteTask)    // Archive/Delete
-
-				// Re-ordering (Drag & Drop)
-				// Note: Board.go handler currently reads task_id from body,
-				// but this route structure is cleaner for the API.
+				r.Put("/", pm.HandleUpdateTask)
+				r.Post("/toggle", pm.HandleToggleTask)
+				r.Delete("/", pm.HandleDeleteTask)
 				r.Put("/move", pm.HandleMoveTask)
-
-				// Conversation Layer (New)
 				r.Get("/comments", pm.HandleListComments)
 				r.Post("/comments", pm.HandleCreateComment)
+				r.Post("/subtasks", pm.HandleCreateSubtask)
+			})
+
+			r.Route("/subtasks/{subtaskID}", func(r chi.Router) {
+				r.Put("/toggle", pm.HandleToggleSubtask)
+				r.Delete("/", pm.HandleDeleteSubtask)
 			})
 		})
 	})
 
-	// 6. Start Server
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
-	fmt.Printf("Starting Magnistruct Monolith on port %s...\n", port)
-	if err := http.ListenAndServe(":"+port, r); err != nil {
-		log.Fatal(err)
-	}
+	fmt.Printf("Starting Server on %s...\n", port)
+	http.ListenAndServe(":"+port, r)
 }

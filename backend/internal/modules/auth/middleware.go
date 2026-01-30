@@ -7,8 +7,6 @@ import (
 	"github.com/norvor/magnistruct/backend/internal/database"
 )
 
-// AuthMiddleware: The Bouncer
-// It checks the cookie, looks up the session, and injects UserID into the request.
 func Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// 1. Get Cookie
@@ -29,7 +27,7 @@ func Middleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// 3. Success! Pass UserID to the next handler via Context
+		// 3. Success! Pass UserID to next handler
 		ctx := context.WithValue(r.Context(), "userID", userID)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})

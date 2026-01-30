@@ -1,283 +1,186 @@
 <script lang="ts">
-    import { page } from '$app/stores';
     import { onMount } from 'svelte';
-    import { api, type BoardData, type Task, type UserSummary } from '$lib/api';
-    import { currentUser } from '$lib/stores/user';
+    import { page } from '$app/stores';
+    import { fade } from 'svelte/transition';
+    import { api, type BoardData, type Task } from '$lib/api';
     
-    // Components
-    import BoardColumn from '$lib/components/board/BoardColumn.svelte';
-    import ListView from '$lib/components/views/ListView.svelte';
-    import CalendarView from '$lib/components/views/CalendarView.svelte';
-    import TaskDetailModal from '$lib/components/board/TaskDetailModal.svelte';
-    import CreateTaskModal from '$lib/components/dashboard/CreateTaskModal.svelte';
+    import EngineSelectorModal from '$lib/components/dashboard/EngineSelectorModal.svelte';
+    import TaskDetailDrawer from '$lib/components/drawers/TaskDetailDrawer.svelte';
 
-    let projectID = $page.params.id;
-    
-    // Svelte 5 State Runes
-    let boardData = $state<BoardData | null>(null);
-    let loading = $state(true);
-    let currentView = $state<'board' | 'list' | 'calendar'>('board');
+    import ClassicView from '$lib/components/views/ClassicView.svelte';
+    import VentureView from '$lib/components/views/VentureView.svelte';
+    import StreamView from '$lib/components/views/StreamView.svelte';
 
-    // Modals
-    let showTaskModal = $state(false);
-    let showCreateModal = $state(false);
-    let selectedTask = $state<Task | null>(null);
-    let createDefaultDate = $state<Date | null>(null);
-    let projectMembers = $state<UserSummary[]>([]);
+    const projectId = $page.params.id;
+    let board: BoardData | null = null;
+    let loading = true;
+    let activeEngine = 'classic';
+    let showEngineModal = false;
+    let isDrawerOpen = false;
+    let selectedTask: Task | null = null;
 
-    // DRAG AND DROP HANDLER
-    async function handleTaskDropped(event: CustomEvent<{ taskId: string, newColumnId: string }>) {
-        const { taskId, newColumnId } = event.detail;
-        if (!boardData) return;
-
-        // 1. Find the task in the old column
-        let task: Task | undefined;
-        let oldColumnId = "";
-
-        // Loop to find task
-        for (const col of boardData.columns) {
-            const found = col.tasks.find(t => t.id === taskId);
-            if (found) {
-                task = found;
-                oldColumnId = col.id;
-                break;
-            }
-        }
-
-        if (!task || oldColumnId === newColumnId) return; // No change needed
-
-        console.log(`Moving task ${task.short_id} from ${oldColumnId} to ${newColumnId}`);
-
-        // 2. Optimistically Update UI
-        // Remove from old column
-        boardData.columns = boardData.columns.map(col => {
-            if (col.id === oldColumnId) {
-                return { ...col, tasks: col.tasks.filter(t => t.id !== taskId) };
-            }
-            // Add to new column (at the end)
-            if (col.id === newColumnId) {
-                // Update local task object
-                const updatedTask = { ...task!, column_id: newColumnId };
-                return { ...col, tasks: [...col.tasks, updatedTask] };
-            }
-            return col;
-        });
-
-        // 3. Send to API
-        try {
-            // We append to the end, so position is high number
-            const newPosition = 999999; 
-            await api.tasks.move(taskId, { 
-                new_column_id: newColumnId, 
-                new_position: newPosition 
-            });
-        } catch (e) {
-            console.error("Move failed", e);
-            // Revert UI here if you want robust error handling
-            loadBoard(); // Reload to fix state
-        }
-    }
-
-    function handleTaskDeleted(event: CustomEvent<string>) {
-        const deletedTaskId = event.detail;
-        if (!boardData) return;
-
-        console.log("🗑 Removing Task ID:", deletedTaskId);
-
-        // Filter out the deleted task from all columns
-        boardData.columns = boardData.columns.map(col => ({
-            ...col,
-            tasks: col.tasks.filter(t => t.id !== deletedTaskId)
-        }));
-        
-        // Clear selection
-        selectedTask = null;
-    }
+    onMount(async () => { await loadBoard(); });
 
     async function loadBoard() {
         try {
-            const data = await api.projects.getBoard(projectID);
-            boardData = data;
+            board = await api.projects.getBoard(projectId);
+            if (board && board.project.active_engines.length > 0 && !board.project.active_engines.includes('classic')) {
+                activeEngine = board.project.active_engines[0];
+            }
+        } catch (e) { console.error(e); } finally { loading = false; }
+    }
 
-            // Populate Members for Dropdowns
-            const uniqueUsers = new Map<string, UserSummary>();
-            if ($currentUser) uniqueUsers.set($currentUser.id, { id: $currentUser.id, full_name: $currentUser.full_name });
-            
-            data.columns.forEach(c => {
-                c.tasks.forEach(t => {
-                    if (t.assignee) uniqueUsers.set(t.assignee.id, t.assignee);
-                });
+    function handleEngineChange(newEngine: string) { activeEngine = newEngine; }
+    function handleOpenTask(e: CustomEvent<Task>) { selectedTask = e.detail; isDrawerOpen = true; }
+    
+    function handleTaskUpdate(e: CustomEvent<Task>) {
+        if (!board) return;
+        const updatedTask = e.detail;
+        board.columns = board.columns.map(col => ({ ...col, tasks: col.tasks.map(t => t.id === updatedTask.id ? updatedTask : t) }));
+        board.orphaned_tasks = board.orphaned_tasks.map(t => t.id === updatedTask.id ? updatedTask : t);
+        board = { ...board };
+    }
+
+    function handleTaskMove(e: CustomEvent) {
+        if (!board) return;
+        const { task, newColumnId, newPosition } = e.detail;
+        const taskId = task.id;
+        board.columns = board.columns.map(col => ({ ...col, tasks: col.tasks.filter(t => t.id !== taskId) }));
+        board.orphaned_tasks = board.orphaned_tasks.filter(t => t.id !== taskId);
+        const updatedTask = { ...task };
+        if (updatedTask.classic) { updatedTask.classic.column_id = newColumnId; updatedTask.classic.position = newPosition; }
+        const targetCol = board.columns.find(c => c.id === newColumnId);
+        if (targetCol) {
+            targetCol.tasks = [...targetCol.tasks, updatedTask];
+            targetCol.tasks.sort((a,b) => (a.classic?.position||0) - (b.classic?.position||0));
+        }
+        board = { ...board };
+    }
+
+    // --- NEW: CREATE TASK HANDLER ---
+    async function handleRequestCreate(e: CustomEvent) {
+        if (!board) return;
+
+        let { title, columnId } = e.detail;
+
+        // Validation (No more Prompt!)
+        if (!title) return; // Silent fail if empty
+
+        // 1. API CREATE
+        try {
+            console.log((projectId, {
+                title: title,
+                engine_type: 'classic',
+                description: '',
+                column_id: columnId || (board.columns[0]?.id) // Send Column ID to backend!
+            }))
+            const newTask = await api.tasks.create(projectId, {
+                title: title,
+                engine_type: 'classic',
+                description: '',
+                column_id: columnId || (board.columns[0]?.id) // Send Column ID to backend!
             });
-            projectMembers = Array.from(uniqueUsers.values());
 
-        } catch (e) {
-            console.error("Failed to load board", e);
-        } finally {
-            loading = false;
+            // 2. UPDATE BOARD STATE (Optimistic-ish)
+            // If backend ignored column_id, we might need to fix it here, 
+            // but the new Go handler should respect it.
+            
+            const targetColId = newTask.classic?.column_id || columnId || board.columns[0].id;
+            const targetCol = board.columns.find(c => c.id === targetColId);
+            
+            if (targetCol) {
+                targetCol.tasks = [...targetCol.tasks, newTask];
+                // Sort by position just in case
+                targetCol.tasks.sort((a,b) => (a.classic?.position||0) - (b.classic?.position||0));
+            } else {
+                board.orphaned_tasks = [...board.orphaned_tasks, newTask];
+            }
+            
+            board = { ...board }; // Trigger update
+
+        } catch (error) {
+            console.error("Failed to create task", error);
+            // Optional: Toast notification here
         }
     }
-
-    onMount(loadBoard);
-
-    // --- EVENT HANDLERS ---
-
-    function handleOpenTask(event: CustomEvent<Task>) {
-        selectedTask = event.detail;
-        showTaskModal = true;
-    }
-
-    function openCreateModal(date: Date | null = null) {
-        createDefaultDate = date;
-        showCreateModal = true;
-    }
-
-    // FIX: This updates the UI immediately without a refresh
-    function handleTaskCreated(event: CustomEvent<Task>) {
-        const newTask = event.detail;
-        if (!boardData) return;
-
-        console.log("⚡ UI Update: Adding Task", newTask.short_id);
-
-        // Map over columns to find the right one and append the task
-        boardData.columns = boardData.columns.map(col => {
-            if (col.id === newTask.column_id) {
-                // Return new object to trigger reactivity
-                return { ...col, tasks: [...col.tasks, newTask] };
-            }
-            return col;
-        });
-    }
-
-    function handleTaskUpdated(event: CustomEvent<Task>) {
-        const updatedTask = event.detail;
-        if (!boardData) return;
-
-        boardData.columns = boardData.columns.map(col => {
-            const idx = col.tasks.findIndex(t => t.id === updatedTask.id);
-            if (idx !== -1) {
-                const newTasks = [...col.tasks];
-                newTasks[idx] = updatedTask;
-                return { ...col, tasks: newTasks };
-            }
-            return col;
-        });
-        
-        selectedTask = updatedTask;
+    
+    
+    function handleTaskDelete(e: CustomEvent<string>) {
+        if (!board) return;
+        const taskId = e.detail;
+        board.columns = board.columns.map(col => ({ ...col, tasks: col.tasks.filter(t => t.id !== taskId) }));
+        board.orphaned_tasks = board.orphaned_tasks.filter(t => t.id !== taskId);
+        board = { ...board };
     }
 </script>
 
-<div class="board-view">
-    {#if loading}
-        <div class="loader-container"><div class="logo-loader">M</div></div>
-    {:else if boardData}
-        <header>
-            <div class="header-content">
-                <div class="breadcrumbs">Projects / {boardData.project.name}</div>
-                <div class="title-row">
-                    <h1>{boardData.project.name}</h1>
-                    
-                    <div class="controls-right">
-                        <div class="view-switcher">
-                            <button class:active={currentView === 'board'} on:click={() => currentView = 'board'}>
-                                <span class="icon">▣</span>
-                            </button>
-                            <button class:active={currentView === 'list'} on:click={() => currentView = 'list'}>
-                                <span class="icon">☰</span>
-                            </button>
-                            <button class:active={currentView === 'calendar'} on:click={() => currentView = 'calendar'}>
-                                <span class="icon">📅</span>
-                            </button>
-                        </div>
+<TaskDetailDrawer 
+    isOpen={isDrawerOpen} 
+    task={selectedTask} 
+    on:close={() => isDrawerOpen = false} 
+    on:update={handleTaskUpdate}
+    on:delete={handleTaskDelete} 
+/>
 
-                        <button class="primary-create-btn" on:click={() => openCreateModal()}>
-                            New Issue
-                        </button>
-                    </div>
-                </div>
+<EngineSelectorModal isOpen={showEngineModal} projectId={projectId} activeEngines={board?.project.active_engines || []} on:close={() => showEngineModal = false} on:change={loadBoard} />
+
+<div class="project-workspace">
+    {#if loading}
+        <div class="loading-state"><div class="spinner"></div></div>
+    {:else if board}
+        <header class="project-header glass-panel">
+            <div class="header-left">
+                <h1>{board.project.name}</h1>
+                <div class="v-sep"></div>
+                <nav class="engine-tabs">
+                    {#each board.project.active_engines as engine}
+                        <button class="tab" class:active={activeEngine === engine} on:click={() => handleEngineChange(engine)}>{engine.toUpperCase()}</button>
+                    {/each}
+                    <button class="add-tab" on:click={() => showEngineModal = true}>+</button>
+                </nav>
             </div>
+            <div class="header-right"><a href="/projects/{projectId}/dashboard" class="action-link">Command Center</a></div>
         </header>
 
-        <div class="view-stage">
-            {#if currentView === 'board'}
-                <div class="kanban-scroll">
-                    {#each boardData.columns as column (column.id)}
-                            <BoardColumn 
-                            {column} 
-                            projectId={projectID}
+        <div class="viewport">
+            {#key activeEngine}
+                <div in:fade={{duration: 200}} class="view-layer">
+                    {#if activeEngine === 'classic'}
+                        <ClassicView 
+                            allTasks={[...board.columns.flatMap(c => c.tasks), ...board.orphaned_tasks]} 
+                            columns={board.columns}
                             on:openTask={handleOpenTask}
-                            on:taskCreated={handleTaskCreated}
-                            on:taskDropped={handleTaskDropped} 
-                            />
-                    {/each}
+                            on:taskMove={handleTaskMove}
+                            on:requestCreate={handleRequestCreate}
+                        />
+                    {:else if activeEngine === 'venture'}
+                        <VentureView allTasks={[...board.columns.flatMap(c => c.tasks), ...board.orphaned_tasks]} on:openTask={handleOpenTask} />
+                    {:else if activeEngine === 'stream'}
+                        <StreamView allTasks={[...board.columns.flatMap(c => c.tasks), ...board.orphaned_tasks]} on:openTask={handleOpenTask} />
+                    {/if}
                 </div>
-            {:else if currentView === 'list'}
-                <ListView 
-                    columns={boardData.columns}
-                    projectId={projectID} 
-                    on:openTask={handleOpenTask} 
-                    on:taskCreated={handleTaskCreated}
-                />
-            {:else if currentView === 'calendar'}
-                <CalendarView 
-                    columns={boardData.columns} 
-                    on:openTask={handleOpenTask} 
-                    on:requestCreate={(e) => openCreateModal(e.detail)}
-                />
-            {/if}
+            {/key}
         </div>
-    {:else}
-        <div class="error-state"><h2>Project Not Found</h2></div>
     {/if}
-
-    <TaskDetailModal 
-        bind:isOpen={showTaskModal}
-        bind:task={selectedTask}
-        members={projectMembers}
-        on:close={() => showTaskModal = false}
-        on:update={handleTaskUpdated}
-        on:delete={handleTaskDeleted}
-    />
-
-    <CreateTaskModal
-        bind:isOpen={showCreateModal}
-        projectId={projectID}
-        columns={boardData?.columns || []}
-        members={projectMembers}
-        defaultDate={createDefaultDate}
-        on:created={handleTaskCreated}
-    />
 </div>
 
 <style>
-    .board-view { height: 100vh; display: flex; flex-direction: column; padding: 0 40px; }
-    
-    header { padding: 40px 0 20px 0; }
-    
-    .title-row { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; }
-    .breadcrumbs { font-size: 0.8rem; color: var(--text-secondary); font-family: 'Space Grotesk'; text-transform: uppercase; letter-spacing: 1px; }
-    h1 { font-size: 2.5rem; color: var(--text-primary); margin: 0; }
-    
-    .controls-right { display: flex; gap: 12px; align-items: center; }
-
-    .view-switcher { display: flex; gap: 4px; background: var(--glass-highlight); padding: 4px; border-radius: 8px; border: 1px solid var(--glass-border); }
-    .view-switcher button { background: transparent; border: none; color: var(--text-secondary); padding: 6px 10px; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: 0.2s; }
-    .view-switcher button:hover { color: var(--text-primary); }
-    .view-switcher button.active { background: var(--card-bg); color: var(--text-primary); box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-
-    .primary-create-btn {
-        background: var(--text-primary); color: var(--bg-main);
-        border: none; padding: 8px 16px; border-radius: 8px;
-        font-weight: 600; font-family: 'Space Grotesk';
-        cursor: pointer; transition: 0.2s;
-    }
-    .primary-create-btn:hover { opacity: 0.9; transform: translateY(-1px); }
-
-    .view-stage { flex: 1; overflow: hidden; padding-bottom: 20px; display: flex; flex-direction: column; }
-    .kanban-scroll { display: flex; gap: 24px; overflow-x: auto; flex: 1; padding-bottom: 10px; }
-    
-    .loader-container { height: 100%; display: grid; place-items: center; }
-    .logo-loader { width: 48px; height: 48px; background: white; border-radius: 12px; color: black; display: grid; place-items: center; font-weight: bold; animation: spin 1s infinite; }
-    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-    
-    .error-state { height: 100%; display: grid; place-items: center; color: var(--text-secondary); }
+    .project-workspace { display: flex; flex-direction: column; height: 100%; }
+    .project-header { height: 64px; padding: 0 24px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--glass-border); background: var(--glass-bg); backdrop-filter: blur(12px); z-index: 20; }
+    .header-left { display: flex; align-items: center; gap: 20px; }
+    h1 { font-size: 1.1rem; margin: 0; color: var(--text-primary); font-weight: 700; letter-spacing: -0.02em; }
+    .v-sep { width: 1px; height: 20px; background: var(--glass-border); }
+    .engine-tabs { display: flex; gap: 4px; }
+    .tab { background: transparent; border: none; padding: 6px 12px; border-radius: 6px; color: var(--text-secondary); font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: 0.2s; }
+    .tab:hover { color: var(--text-primary); background: var(--glass-highlight); }
+    .tab.active { color: var(--text-primary); background: var(--glass-highlight); font-weight: 700; }
+    .add-tab { background: none; border: none; color: var(--text-tertiary); cursor: pointer; font-size: 1.1rem; }
+    .add-tab:hover { color: var(--text-primary); }
+    .action-link { color: var(--text-secondary); text-decoration: none; font-size: 0.85rem; font-weight: 500; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--glass-border); }
+    .action-link:hover { background: var(--glass-highlight); color: var(--text-primary); }
+    .viewport { flex: 1; position: relative; overflow: hidden; }
+    .view-layer { width: 100%; height: 100%; }
+    .loading-state { height: 100%; display: grid; place-items: center; }
+    .spinner { width: 24px; height: 24px; border: 2px solid var(--glass-border); border-top-color: var(--text-primary); border-radius: 50%; animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
 </style>

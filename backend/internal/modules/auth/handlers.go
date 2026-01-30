@@ -4,7 +4,9 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/norvor/magnistruct/backend/internal/database"
@@ -23,11 +25,11 @@ type LoginRequest struct {
 	Password string `json:"password"`
 }
 
-// NEW: Struct to handle profile/theme updates
-type UpdateSettingsRequest struct {
-	Theme    string `json:"theme"`
+type UpdateProfileRequest struct {
+	FullName string `json:"full_name"`
 	JobTitle string `json:"job_title"`
 	Bio      string `json:"bio"`
+	Theme    string `json:"theme"`
 }
 
 type UserResponse struct {
@@ -41,108 +43,182 @@ type UserResponse struct {
 }
 
 // --- HELPERS ---
-
-// generateToken creates a random 32-byte secure string
 func generateToken() string {
 	b := make([]byte, 32)
 	rand.Read(b)
 	return base64.URLEncoding.EncodeToString(b)
 }
 
+// sanitizeEmail cleans input to prevent mismatches
+func sanitizeEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
+}
+
 // --- HANDLERS ---
 
 func HandleRegister(w http.ResponseWriter, r *http.Request) {
+	fmt.Println("--- 📝 STARTING REGISTRATION ---")
+
 	var req RegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fmt.Println("❌ JSON Decode Error:", err)
 		http.Error(w, "Invalid Input", http.StatusBadRequest)
 		return
 	}
 
-	// 1. Hash Password (Cost 12 is standard for 2026)
-	hash, _ := bcrypt.GenerateFromPassword([]byte(req.Password), 12)
+	// DEBUG: Print exactly what the frontend sent
+	fmt.Printf("   Email: '%s'\n", req.Email)
+	fmt.Printf("   Name:  '%s'\n", req.FullName)
+	fmt.Printf("   Pass:  [HIDDEN] (Len: %d)\n", len(req.Password))
 
-	// 2. Insert User
-	var userID string
-	err := database.DB.QueryRow(r.Context(),
-		"INSERT INTO users (email, password_hash, full_name) VALUES ($1, $2, $3) RETURNING id",
-		req.Email, string(hash), req.FullName).Scan(&userID)
-
-	if err != nil {
-		http.Error(w, "Email likely already taken", http.StatusConflict)
+	// 1. Sanitize
+	cleanEmail := sanitizeEmail(req.Email)
+	if cleanEmail == "" {
+		fmt.Println("❌ Error: Email is empty after sanitization")
+		http.Error(w, "Email required", 400)
 		return
 	}
 
+	if req.FullName == "" {
+		fmt.Println("❌ Error: Full Name is empty (JSON mismatch?)")
+		http.Error(w, "Full Name required", 400)
+		return
+	}
+
+	// 2. Hash
+	hash, _ := bcrypt.GenerateFromPassword([]byte(req.Password), 12)
+
+	// 3. Insert
+	fmt.Println("   -> Attempting DB Insert...")
+	var userID string
+	err := database.DB.QueryRow(r.Context(),
+		"INSERT INTO users (email, password_hash, full_name) VALUES ($1, $2, $3) RETURNING id",
+		cleanEmail, string(hash), req.FullName).Scan(&userID)
+
+	if err != nil {
+		fmt.Println("❌ DB INSERT FAILED:", err)
+		// Check for specific Postgres errors
+		if strings.Contains(err.Error(), "duplicate key") {
+			http.Error(w, "Email already exists", 409)
+		} else {
+			http.Error(w, "Database Error", 500)
+		}
+		return
+	}
+
+	fmt.Printf("✅ SUCCESS! User created with ID: %s\n", userID)
 	w.WriteHeader(http.StatusCreated)
 	w.Write([]byte(`{"message": "Account created"}`))
 }
 
 func HandleLogin(w http.ResponseWriter, r *http.Request) {
+	fmt.Println("\n--- 🔍 STARTING LOGIN DEBUG ---")
+
 	var req LoginRequest
-	json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", 400)
+		return
+	}
 
-	// 1. Find User
+	// 1. PRINT INPUTS
+	cleanEmail := sanitizeEmail(req.Email)
+	fmt.Printf("   Incoming Email: '%s'\n", req.Email)
+	fmt.Printf("   Cleaned Email:  '%s'\n", cleanEmail)
+	fmt.Printf("   Password Len:   %d\n", len(req.Password))
+
+	// 2. CHECK DATABASE
 	var id, hash string
-	err := database.DB.QueryRow(r.Context(), "SELECT id, password_hash FROM users WHERE email=$1", req.Email).Scan(&id, &hash)
+	// We select email too just to be sure
+	var dbEmail string
+	err := database.DB.QueryRow(r.Context(),
+		"SELECT id, email, password_hash FROM users WHERE email=$1",
+		cleanEmail).Scan(&id, &dbEmail, &hash)
+
 	if err != nil {
-		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+		fmt.Println("❌ DB QUERY FAILED:", err)
+		fmt.Println("   -> This means the email does not exist in the 'users' table.")
+		http.Error(w, "Invalid credentials (User not found)", http.StatusUnauthorized)
 		return
 	}
 
-	// 2. Check Password
-	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)); err != nil {
-		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+	fmt.Printf("   -> Found User ID: %s\n", id)
+	fmt.Printf("   -> Stored Hash:   %s... (Len: %d)\n", hash[:10], len(hash))
+
+	// 3. COMPARE PASSWORD
+	err = bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password))
+	if err != nil {
+		fmt.Println("❌ PASSWORD MISMATCH:", err)
+		fmt.Println("   -> The password you typed does not match the hash in the DB.")
+		http.Error(w, "Invalid credentials (Bad Password)", http.StatusUnauthorized)
 		return
 	}
 
-	// 3. Create Session
+	// 4. GENERATE SESSION
 	token := generateToken()
-	expiresAt := time.Now().Add(7 * 24 * time.Hour) // 7 Days
+	expiresAt := time.Now().Add(7 * 24 * time.Hour)
 
 	_, err = database.DB.Exec(r.Context(),
 		"INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, $3)",
 		token, id, expiresAt)
 	if err != nil {
-		http.Error(w, "Session error", http.StatusInternalServerError)
+		fmt.Println("❌ SESSION INSERT FAILED:", err)
+		http.Error(w, "Server Error", 500)
 		return
 	}
 
-	// 4. Set HTTP-Only Cookie (The Security Gold Standard)
 	http.SetCookie(w, &http.Cookie{
-		Name:     "session_token",
-		Value:    token,
-		Expires:  expiresAt,
-		HttpOnly: true,  // JavaScript cannot read this (XSS protection)
-		Secure:   false, // Set to true in Production (requires HTTPS)
-		Path:     "/",
-		SameSite: http.SameSiteLaxMode,
+		Name: "session_token", Value: token, Expires: expiresAt,
+		HttpOnly: true, Path: "/", SameSite: http.SameSiteLaxMode,
 	})
 
+	fmt.Println("✅ LOGIN SUCCESS!")
 	w.Write([]byte(`{"message": "Logged in"}`))
 }
 
 func HandleMe(w http.ResponseWriter, r *http.Request) {
-	c, err := r.Cookie("session_token")
-	if err != nil {
-		http.Error(w, "Not logged in", http.StatusUnauthorized)
+	fmt.Println("\n--- 🕵️ INVESTIGATIVE HandleMe STARTING ---")
+
+	// 1. INSPECT CONTEXT (Did Middleware do its job?)
+	ctxVal := r.Context().Value("userID")
+	fmt.Printf("   1. Context Value for 'userID': %v\n", ctxVal)
+
+	if ctxVal == nil {
+		fmt.Println("❌ CRITICAL FAIL: Context is empty. The Auth Middleware did NOT run or failed to inject the ID.")
+		http.Error(w, "Server Error: Auth Middleware missing", 500)
 		return
 	}
 
+	// 2. CHECK TYPE ASSERTION
+	userID, ok := ctxVal.(string)
+	if !ok {
+		fmt.Printf("❌ CRITICAL FAIL: Context value is type %T, expected string\n", ctxVal)
+		http.Error(w, "Server Error: Invalid UserID type", 500)
+		return
+	}
+	fmt.Printf("   2. User ID extracted: %s\n", userID)
+
+	// 3. INSPECT DATABASE LOOKUP
+	fmt.Println("   3. Querying Database for User Profile...")
 	var u UserResponse
 	query := `
-		SELECT u.id, u.email, u.full_name, COALESCE(u.avatar_url, ''), 
-		       COALESCE(u.job_title, ''), COALESCE(u.bio, ''), COALESCE(u.theme, 'aurora')
-		FROM sessions s
-		JOIN users u ON u.id = s.user_id
-		WHERE s.token = $1 AND s.expires_at > NOW()
-	`
-	err = database.DB.QueryRow(r.Context(), query, c.Value).
+        SELECT id, email, full_name, COALESCE(avatar_url, ''), 
+               COALESCE(job_title, ''), COALESCE(bio, ''), COALESCE(theme, 'aurora')
+        FROM users
+        WHERE id = $1
+    `
+	err := database.DB.QueryRow(r.Context(), query, userID).
 		Scan(&u.ID, &u.Email, &u.FullName, &u.Avatar, &u.JobTitle, &u.Bio, &u.Theme)
 
 	if err != nil {
-		http.Error(w, "Session expired", http.StatusUnauthorized)
+		fmt.Printf("❌ DB FAIL: %v\n", err)
+		if err.Error() == "no rows in result set" {
+			fmt.Println("   -> This user ID exists in the session/cookie, but was DELETED from the 'users' table.")
+		}
+		http.Error(w, "User not found in DB", 401)
 		return
 	}
 
+	fmt.Printf("✅ SUCCESS: Found user '%s' (%s)\n", u.Email, u.FullName)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(u)
 }
@@ -150,11 +226,9 @@ func HandleMe(w http.ResponseWriter, r *http.Request) {
 func HandleLogout(w http.ResponseWriter, r *http.Request) {
 	c, _ := r.Cookie("session_token")
 	if c != nil {
-		// Delete from DB
 		database.DB.Exec(r.Context(), "DELETE FROM sessions WHERE token=$1", c.Value)
 	}
 
-	// Clear Cookie
 	http.SetCookie(w, &http.Cookie{
 		Name:     "session_token",
 		Value:    "",
@@ -165,38 +239,27 @@ func HandleLogout(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"message": "Logged out"}`))
 }
 
-// NEW FUNCTION: Updates user theme and profile info
-func HandleUpdateSettings(w http.ResponseWriter, r *http.Request) {
-	c, err := r.Cookie("session_token")
-	if err != nil {
-		http.Error(w, "Not logged in", http.StatusUnauthorized)
-		return
-	}
+func HandleUpdateProfile(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value("userID").(string)
 
-	var req UpdateSettingsRequest
+	var req UpdateProfileRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid Input", http.StatusBadRequest)
 		return
 	}
 
-	// 1. Get User ID from Session
-	var userID string
-	err = database.DB.QueryRow(r.Context(), "SELECT user_id FROM sessions WHERE token=$1 AND expires_at > NOW()", c.Value).Scan(&userID)
+	_, err := database.DB.Exec(r.Context(),
+		"UPDATE users SET full_name=$1, job_title=$2, bio=$3, theme=$4, updated_at=NOW() WHERE id=$5",
+		req.FullName, req.JobTitle, req.Bio, req.Theme, userID)
+
 	if err != nil {
-		http.Error(w, "Session invalid", http.StatusUnauthorized)
+		http.Error(w, "Update failed", http.StatusInternalServerError)
 		return
 	}
 
-	// 2. Update User in DB
-	// Note: We update job_title/bio here too as they are part of the settings vertical
-	_, err = database.DB.Exec(r.Context(),
-		"UPDATE users SET theme = $1, job_title = $2, bio = $3 WHERE id = $4",
-		req.Theme, req.JobTitle, req.Bio, userID)
+	w.WriteHeader(http.StatusOK)
+}
 
-	if err != nil {
-		http.Error(w, "Failed to update settings", http.StatusInternalServerError)
-		return
-	}
-
-	w.Write([]byte(`{"message": "Settings updated"}`))
+func HandleUpdateSettings(w http.ResponseWriter, r *http.Request) {
+	HandleUpdateProfile(w, r)
 }

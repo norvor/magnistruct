@@ -9,25 +9,26 @@ import (
 	"github.com/norvor/magnistruct/backend/internal/database"
 )
 
-// Comment Model with nested User
+// Comment Model
+// Note: UserSummary is defined in types.go
 type Comment struct {
 	ID        string      `json:"id"`
 	TaskID    string      `json:"task_id"`
 	Content   string      `json:"content"`
 	CreatedAt time.Time   `json:"created_at"`
-	User      UserSummary `json:"user"` // Reuses UserSummary from board.go
+	User      UserSummary `json:"user"`
 }
 
 // HandleListComments: Fetch conversation history for a specific task
 func HandleListComments(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskID")
 
-	// Join with users table to show WHO said it
+	// Query from the new 'comments' table
 	query := `
 		SELECT 
 			c.id, c.task_id, c.content, c.created_at,
 			u.id, u.full_name
-		FROM task_comments c
+		FROM comments c
 		JOIN users u ON c.user_id = u.id
 		WHERE c.task_id = $1
 		ORDER BY c.created_at ASC
@@ -45,12 +46,10 @@ func HandleListComments(w http.ResponseWriter, r *http.Request) {
 		var c Comment
 		var uID, uName string
 
-		// Scan row into variables
 		if err := rows.Scan(&c.ID, &c.TaskID, &c.Content, &c.CreatedAt, &uID, &uName); err != nil {
 			continue
 		}
 
-		// Construct the nested User object
 		c.User = UserSummary{
 			ID:       uID,
 			FullName: uName,
@@ -67,9 +66,8 @@ func HandleListComments(w http.ResponseWriter, r *http.Request) {
 func HandleCreateComment(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskID")
 
-	// 1. Parse Request
 	var req struct {
-		UserID  string `json:"user_id"` // In a real app, get this from Context/Session
+		UserID  string `json:"user_id"`
 		Content string `json:"content"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -82,10 +80,9 @@ func HandleCreateComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. Insert into DB
 	var c Comment
 	query := `
-		INSERT INTO task_comments (task_id, user_id, content)
+		INSERT INTO comments (task_id, user_id, content)
 		VALUES ($1, $2, $3)
 		RETURNING id, created_at
 	`
@@ -98,11 +95,10 @@ func HandleCreateComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3. Fetch User Details immediately to return full object (Optimistic UI support)
+	// Fetch User Details for response
 	var uName string
 	database.DB.QueryRow(r.Context(), "SELECT full_name FROM users WHERE id=$1", req.UserID).Scan(&uName)
 
-	// 4. Return Full Comment Object
 	c.TaskID = taskID
 	c.Content = req.Content
 	c.User = UserSummary{
