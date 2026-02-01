@@ -40,32 +40,60 @@ func main() {
 
 	r.Route("/api", func(r chi.Router) {
 
-		// 1. AUTH MODULE (Handles /api/auth/login, /api/auth/me, etc.)
-		r.Route("/auth", auth.SetupRoutes)
+		// --- AUTHENTICATION ---
+		r.Route("/auth", func(r chi.Router) {
+			r.Post("/register", auth.HandleRegister)
+			r.Post("/login", auth.HandleLogin)
+			r.Post("/logout", auth.HandleLogout)
+			r.With(auth.Middleware).Get("/me", auth.HandleMe)
+		})
 
-		// 2. PM MODULE (Needs Auth Middleware explicitly)
+		// --- PROTECTED ROUTES ---
 		r.Group(func(r chi.Router) {
-			r.Use(auth.Middleware) // Protect everything below
+			r.Use(auth.Middleware)
 
-			r.Get("/projects", pm.HandleListProjects)
-			r.Post("/projects", pm.HandleCreateProject)
+			// 1. ORGANIZATION & TEAMS (The Hierarchy)
+			r.Route("/orgs", func(r chi.Router) {
+				r.Get("/", pm.HandleGetMyOrgs)                // List my orgs
+				r.Post("/", pm.HandleCreateOrg)               // Create new org
+				r.Post("/{orgID}/switch", pm.HandleSwitchOrg) // Switch context
 
-			r.Get("/projects/{projectID}/board", pm.HandleGetBoard)
-			r.Put("/projects/{projectID}/engines", pm.HandleToggleEngine)
+				// Teams within Org
+				r.Get("/{orgID}/teams", pm.HandleListTeams)
+				r.Post("/{orgID}/teams", pm.HandleCreateTeam)
+			})
 
-			r.Post("/projects/{projectID}/columns", pm.HandleCreateColumn)
-			r.Post("/projects/{projectID}/tasks", pm.HandleCreateTask)
+			// 2. PROJECTS (Context Aware)
+			r.Route("/projects", func(r chi.Router) {
+				r.Get("/", pm.HandleListProjects) // Lists based on ?org_id= or active context
+				r.Post("/", pm.HandleCreateProject)
 
+				r.Route("/{projectID}", func(r chi.Router) {
+					r.Get("/board", pm.HandleGetBoard) // The "Steel" Dashboard Load
+					r.Put("/", pm.HandleUpdateProject)
+
+					// Creating tasks needs project context
+					r.Post("/tasks", pm.HandleCreateTask)
+
+					// Toggle Engine (if needed separate, or use UpdateProject)
+					// r.Put("/engines", pm.HandleToggleEngine)
+				})
+			})
+
+			// 3. TASKS (The Engine Room)
 			r.Route("/tasks/{taskID}", func(r chi.Router) {
-				r.Put("/", pm.HandleUpdateTask)
-				r.Post("/toggle", pm.HandleToggleTask)
+				r.Put("/", pm.HandleUpdateTask) // Universal Update
 				r.Delete("/", pm.HandleDeleteTask)
-				r.Put("/move", pm.HandleMoveTask)
-				r.Get("/comments", pm.HandleListComments)
-				r.Post("/comments", pm.HandleCreateComment)
+				r.Put("/move", pm.HandleMoveTask) // Kanban Drag & Drop
+
+				// JSONB Activity Log
+				r.Get("/activity", pm.HandleGetTaskActivity)
+
+				// Subtasks
 				r.Post("/subtasks", pm.HandleCreateSubtask)
 			})
 
+			// 4. SUBTASKS (Direct manipulation)
 			r.Route("/subtasks/{subtaskID}", func(r chi.Router) {
 				r.Put("/toggle", pm.HandleToggleSubtask)
 				r.Delete("/", pm.HandleDeleteSubtask)

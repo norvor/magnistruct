@@ -3,36 +3,24 @@ package pm
 import (
 	"encoding/json"
 	"net/http"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/norvor/magnistruct/backend/internal/database"
 )
 
-// Comment Model
-// Note: UserSummary is defined in types.go
-type Comment struct {
-	ID        string      `json:"id"`
-	TaskID    string      `json:"task_id"`
-	Content   string      `json:"content"`
-	CreatedAt time.Time   `json:"created_at"`
-	User      UserSummary `json:"user"`
-}
-
 // HandleListComments: Fetch conversation history for a specific task
 func HandleListComments(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskID")
 
-	// Query from the new 'comments' table
 	query := `
-		SELECT 
-			c.id, c.task_id, c.content, c.created_at,
-			u.id, u.full_name
-		FROM comments c
-		JOIN users u ON c.user_id = u.id
-		WHERE c.task_id = $1
-		ORDER BY c.created_at ASC
-	`
+        SELECT 
+            c.id, c.task_id, c.content, c.created_at,
+            u.id, u.full_name, u.avatar_url
+        FROM comments c
+        JOIN users u ON c.user_id = u.id
+        WHERE c.task_id = $1
+        ORDER BY c.created_at ASC
+    `
 
 	rows, err := database.DB.Query(r.Context(), query, taskID)
 	if err != nil {
@@ -45,14 +33,22 @@ func HandleListComments(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var c Comment
 		var uID, uName string
+		var uAvatar *string
 
-		if err := rows.Scan(&c.ID, &c.TaskID, &c.Content, &c.CreatedAt, &uID, &uName); err != nil {
+		// Scan into local variables first
+		// Note: We ignore task_id in scan if not needed, but your query selects it
+		var taskIDPlaceholder string
+		if err := rows.Scan(&c.ID, &taskIDPlaceholder, &c.Content, &c.CreatedAt, &uID, &uName, &uAvatar); err != nil {
 			continue
 		}
 
-		c.User = UserSummary{
+		c.UserID = uID
+		c.User = &UserSummary{
 			ID:       uID,
 			FullName: uName,
+		}
+		if uAvatar != nil {
+			c.User.AvatarURL = *uAvatar
 		}
 
 		comments = append(comments, c)
@@ -66,8 +62,10 @@ func HandleListComments(w http.ResponseWriter, r *http.Request) {
 func HandleCreateComment(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskID")
 
+	// SECURITY: Get User ID from Context (AuthMiddleware), not Body
+	userID := r.Context().Value("user_id").(string)
+
 	var req struct {
-		UserID  string `json:"user_id"`
 		Content string `json:"content"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -82,12 +80,12 @@ func HandleCreateComment(w http.ResponseWriter, r *http.Request) {
 
 	var c Comment
 	query := `
-		INSERT INTO comments (task_id, user_id, content)
-		VALUES ($1, $2, $3)
-		RETURNING id, created_at
-	`
+        INSERT INTO comments (task_id, user_id, content)
+        VALUES ($1, $2, $3)
+        RETURNING id, created_at
+    `
 
-	err := database.DB.QueryRow(r.Context(), query, taskID, req.UserID, req.Content).
+	err := database.DB.QueryRow(r.Context(), query, taskID, userID, req.Content).
 		Scan(&c.ID, &c.CreatedAt)
 
 	if err != nil {
@@ -97,14 +95,21 @@ func HandleCreateComment(w http.ResponseWriter, r *http.Request) {
 
 	// Fetch User Details for response
 	var uName string
-	database.DB.QueryRow(r.Context(), "SELECT full_name FROM users WHERE id=$1", req.UserID).Scan(&uName)
+	var uAvatar *string
+	database.DB.QueryRow(r.Context(), "SELECT full_name, avatar_url FROM users WHERE id=$1", userID).Scan(&uName, &uAvatar)
 
-	c.TaskID = taskID
+	c.UserID = userID
 	c.Content = req.Content
-	c.User = UserSummary{
-		ID:       req.UserID,
+	c.User = &UserSummary{
+		ID:       userID,
 		FullName: uName,
 	}
+	if uAvatar != nil {
+		c.User.AvatarURL = *uAvatar
+	}
+
+	// LOGGING: Record this in the main JSONB activity log too
+	LogActivity(r.Context(), taskID, userID, "comment", "Posted a comment")
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(c)
