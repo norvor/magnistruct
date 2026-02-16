@@ -27,6 +27,7 @@ RUN apk --no-cache add ca-certificates
 
 COPY --from=builder /app/main .
 COPY --from=builder /app/migrations ./migrations
+COPY --from=builder /app/internal/database/schema.sql ./internal/database/schema.sql
 # Copy any other necessary assets, e.g., templates or config files if not embedded
 
 EXPOSE 8080
