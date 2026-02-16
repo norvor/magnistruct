@@ -43,11 +43,13 @@ func HandleCreateOrg(w http.ResponseWriter, r *http.Request) {
 	var orgID string
 
 	// A. Insert Org
+	// DISABLED - Use System Core API instead (/api/orgs)
+	// This references non-existent 'slug' column
 	err = tx.QueryRow(r.Context(), `
-		INSERT INTO organizations (name, slug, plan) 
-		VALUES ($1, $2, 'free') 
+		INSERT INTO sys_organizations (name, plan_tier) 
+		VALUES ($1, 'free') 
 		RETURNING id
-	`, req.Name, req.Slug).Scan(&orgID)
+	`, req.Name).Scan(&orgID)
 
 	if err != nil {
 		http.Error(w, "Failed to create organization (Slug might be taken)", 409)
@@ -56,7 +58,7 @@ func HandleCreateOrg(w http.ResponseWriter, r *http.Request) {
 
 	// B. Make User the Owner
 	_, err = tx.Exec(r.Context(), `
-		INSERT INTO organization_members (org_id, user_id, role) 
+		INSERT INTO sys_members (org_id, user_id, role) 
 		VALUES ($1, $2, 'owner')
 	`, orgID, userID)
 	if err != nil {
@@ -64,14 +66,8 @@ func HandleCreateOrg(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// C. Switch User Context to new Org
-	_, err = tx.Exec(r.Context(), `
-		UPDATE users SET current_org_id = $1 WHERE id = $2
-	`, orgID, userID)
-	if err != nil {
-		http.Error(w, "Failed to switch context", 500)
-		return
-	}
+	// C. DISABLED - current_org_id column doesn't exist
+	// Context is managed via session/JWT instead
 
 	tx.Commit(r.Context())
 
@@ -83,10 +79,11 @@ func HandleCreateOrg(w http.ResponseWriter, r *http.Request) {
 func HandleGetMyOrgs(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value("user_id").(string)
 
+	// DISABLED - Use System Core API instead (/api/orgs)
 	rows, err := database.DB.Query(r.Context(), `
-		SELECT o.id, o.name, o.slug, o.plan, m.role 
-		FROM organizations o
-		JOIN organization_members m ON o.id = m.org_id
+		SELECT o.id, o.name, o.plan_tier, m.role 
+		FROM sys_organizations o
+		JOIN sys_members m ON o.id = m.org_id
 		WHERE m.user_id = $1
 		ORDER BY o.created_at DESC
 	`, userID)
@@ -99,10 +96,10 @@ func HandleGetMyOrgs(w http.ResponseWriter, r *http.Request) {
 
 	var orgs []map[string]interface{}
 	for rows.Next() {
-		var id, name, slug, plan, role string
-		rows.Scan(&id, &name, &slug, &plan, &role)
+		var id, name, plan, role string
+		rows.Scan(&id, &name, &plan, &role)
 		orgs = append(orgs, map[string]interface{}{
-			"id": id, "name": name, "slug": slug, "plan": plan, "role": role,
+			"id": id, "name": name, "plan": plan, "role": role,
 		})
 	}
 
@@ -118,7 +115,7 @@ func HandleSwitchOrg(w http.ResponseWriter, r *http.Request) {
 	// 1. Verify Membership first
 	var role string
 	err := database.DB.QueryRow(r.Context(), `
-		SELECT role FROM organization_members WHERE org_id = $1 AND user_id = $2
+		SELECT role FROM sys_members WHERE org_id = $1 AND user_id = $2
 	`, orgID, userID).Scan(&role)
 
 	if err != nil {
@@ -126,12 +123,11 @@ func HandleSwitchOrg(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. Update User Context
-	_, err = database.DB.Exec(r.Context(), `UPDATE users SET current_org_id = $1 WHERE id = $2`, orgID, userID)
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
+	// 2. DISABLED - current_org_id doesn't exist
+	// Context switching managed via session/JWT instead
+	// For now, just return success as membership is verified
+	http.Error(w, "Organization switching not implemented - use System Core API", 501)
+	return
 
 	w.WriteHeader(http.StatusOK)
 }

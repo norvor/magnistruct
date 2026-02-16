@@ -8,17 +8,17 @@ import (
 	"github.com/norvor/magnistruct/backend/internal/database"
 )
 
-// HandleListComments: Fetch conversation history for a specific task
+// HandleListComments: Fetch conversation history from sys_comments
 func HandleListComments(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskID")
 
 	query := `
         SELECT 
-            c.id, c.task_id, c.content, c.created_at,
+            c.id, c.entity_id, c.content, c.created_at,
             u.id, u.full_name, u.avatar_url
-        FROM comments c
-        JOIN users u ON c.user_id = u.id
-        WHERE c.task_id = $1
+        FROM sys_comments c
+        JOIN sys_users u ON c.user_id = u.id
+        WHERE c.entity_id = $1 AND c.entity_type = 'pm_work_item'
         ORDER BY c.created_at ASC
     `
 
@@ -35,10 +35,7 @@ func HandleListComments(w http.ResponseWriter, r *http.Request) {
 		var uID, uName string
 		var uAvatar *string
 
-		// Scan into local variables first
-		// Note: We ignore task_id in scan if not needed, but your query selects it
-		var taskIDPlaceholder string
-		if err := rows.Scan(&c.ID, &taskIDPlaceholder, &c.Content, &c.CreatedAt, &uID, &uName, &uAvatar); err != nil {
+		if err := rows.Scan(&c.ID, &c.EntityID, &c.Content, &c.CreatedAt, &uID, &uName, &uAvatar); err != nil {
 			continue
 		}
 
@@ -58,11 +55,9 @@ func HandleListComments(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(comments)
 }
 
-// HandleCreateComment: Post a new message
+// HandleCreateComment: Post a new message to sys_comments
 func HandleCreateComment(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskID")
-
-	// SECURITY: Get User ID from Context (AuthMiddleware), not Body
 	userID := r.Context().Value("user_id").(string)
 
 	var req struct {
@@ -80,8 +75,8 @@ func HandleCreateComment(w http.ResponseWriter, r *http.Request) {
 
 	var c Comment
 	query := `
-        INSERT INTO comments (task_id, user_id, content)
-        VALUES ($1, $2, $3)
+        INSERT INTO sys_comments (entity_type, entity_id, user_id, content)
+        VALUES ('pm_work_item', $1, $2, $3)
         RETURNING id, created_at
     `
 
@@ -96,10 +91,11 @@ func HandleCreateComment(w http.ResponseWriter, r *http.Request) {
 	// Fetch User Details for response
 	var uName string
 	var uAvatar *string
-	database.DB.QueryRow(r.Context(), "SELECT full_name, avatar_url FROM users WHERE id=$1", userID).Scan(&uName, &uAvatar)
+	database.DB.QueryRow(r.Context(), "SELECT full_name, avatar_url FROM sys_users WHERE id=$1", userID).Scan(&uName, &uAvatar)
 
 	c.UserID = userID
 	c.Content = req.Content
+	c.EntityID = taskID
 	c.User = &UserSummary{
 		ID:       userID,
 		FullName: uName,
@@ -108,7 +104,6 @@ func HandleCreateComment(w http.ResponseWriter, r *http.Request) {
 		c.User.AvatarURL = *uAvatar
 	}
 
-	// LOGGING: Record this in the main JSONB activity log too
 	LogActivity(r.Context(), taskID, userID, "comment", "Posted a comment")
 
 	w.Header().Set("Content-Type", "application/json")

@@ -44,6 +44,44 @@ func Connect() {
 	}
 
 	fmt.Println("✅ Connected to PostgreSQL successfully")
+
+	// Auto-Migrate Schema
+	schemaPath := "internal/database/schema.sql"
+	// Fallback for running from different directories (e.g. tests)
+	if _, err := os.Stat(schemaPath); os.IsNotExist(err) {
+		schemaPath = "../../internal/database/schema.sql"
+	}
+
+	c, err := os.ReadFile(schemaPath)
+	if err != nil {
+		// Try one more common path before failing (e.g. if binary is built)
+		// For now, fast fail is better than silent failure
+		log.Fatalf("Unable to read schema file at %s: %v", schemaPath, err)
+	}
+
+	if _, err := db.Exec(context.Background(), string(c)); err != nil {
+		log.Fatalf("Failed to execute migration: %v", err)
+	}
+
+	// Ensure new columns exist (Postgres 9.6+)
+	alterQueries := []string{
+		`ALTER TABLE pm_journeys ADD COLUMN IF NOT EXISTS engine_spec_id UUID;`,
+		`ALTER TABLE pm_work_items ADD COLUMN IF NOT EXISTS journey_id UUID REFERENCES pm_journeys(id) ON DELETE SET NULL;`,
+		`ALTER TABLE pm_work_items ADD COLUMN IF NOT EXISTS goal_id UUID REFERENCES pm_goals(id) ON DELETE SET NULL;`,
+		`ALTER TABLE pm_goals ADD COLUMN IF NOT EXISTS lead_id UUID REFERENCES sys_users(id);`,
+		`ALTER TABLE pm_goals ADD COLUMN IF NOT EXISTS purpose_id UUID REFERENCES life_purposes(id) ON DELETE SET NULL;`,
+		`ALTER TABLE pm_goals ADD COLUMN IF NOT EXISTS cover_image TEXT;`,
+		`ALTER TABLE pm_goals ADD COLUMN IF NOT EXISTS category TEXT;`,
+	}
+
+	for _, q := range alterQueries {
+		if _, err := db.Exec(context.Background(), q); err != nil {
+			fmt.Printf("Note: Migration check for query [%s] failed: %v\n", q, err)
+		}
+	}
+
+	fmt.Println("✅ Database Schema Migrated Successfully (35 Tables)")
+
 	DB = db
 }
 

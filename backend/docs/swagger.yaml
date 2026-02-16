@@ -1,0 +1,209 @@
+basePath: /api
+definitions:
+  dto.APIKey:
+    properties:
+      created_at:
+        type: string
+      expires_at:
+        type: string
+      id:
+        type: string
+      key_prefix:
+        type: string
+      label:
+        type: string
+      last_used_at:
+        type: string
+      org_id:
+        type: string
+      user_id:
+        type: string
+    type: object
+  dto.CreateAPIKeyRequest:
+    properties:
+      expires_in_days:
+        description: 0 = no expiry
+        type: integer
+      label:
+        type: string
+    type: object
+  dto.CreateAPIKeyResponse:
+    properties:
+      api_key:
+        $ref: '#/definitions/dto.APIKey'
+      raw_key:
+        description: Shown only once
+        type: string
+    type: object
+  dto.File:
+    properties:
+      created_at:
+        type: string
+      entity_id:
+        type: string
+      entity_type:
+        type: string
+      filename:
+        type: string
+      id:
+        type: string
+      mime_type:
+        type: string
+      org_id:
+        type: string
+      size_bytes:
+        type: integer
+      uploader_id:
+        type: string
+      url:
+        description: Signed or public URL
+        type: string
+    type: object
+  models.ErrorResponse:
+    properties:
+      code:
+        type: integer
+      error:
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact: {}
+  description: Backend API for the Magnistruct platform.
+  title: Magnistruct API
+  version: "1.0"
+paths:
+  /files:
+    post:
+      consumes:
+      - multipart/form-data
+      description: Upload a file associated with an entity
+      parameters:
+      - description: File to upload
+        in: formData
+        name: file
+        required: true
+        type: file
+      - description: Entity Type
+        in: formData
+        name: entity_type
+        type: string
+      - description: Entity ID
+        in: formData
+        name: entity_id
+        type: string
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/dto.File'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      summary: Upload a file
+      tags:
+      - files
+  /files/{id}:
+    get:
+      description: Get metadata for a specific file
+      parameters:
+      - description: File ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.File'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      summary: Get file metadata
+      tags:
+      - files
+  /files/entity/{type}/{id}:
+    get:
+      description: List all files attached to a specific entity
+      parameters:
+      - description: Entity Type
+        in: path
+        name: type
+        required: true
+        type: string
+      - description: Entity ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/dto.File'
+            type: array
+      summary: List files for an entity
+      tags:
+      - files
+  /iam/api-keys:
+    get:
+      description: List active API keys
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/dto.APIKey'
+            type: array
+      summary: List API Keys
+      tags:
+      - iam
+    post:
+      consumes:
+      - application/json
+      description: Create a new API key for external access
+      parameters:
+      - description: Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.CreateAPIKeyRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/dto.CreateAPIKeyResponse'
+      summary: Create API Key
+      tags:
+      - iam
+  /iam/api-keys/{id}:
+    delete:
+      description: Delete an API key
+      parameters:
+      - description: API Key ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+      summary: Revoke API Key
+      tags:
+      - iam
+swagger: "2.0"
