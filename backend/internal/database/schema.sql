@@ -58,6 +58,67 @@ CREATE TABLE IF NOT EXISTS sys_access_grants (
 -- III. THE PRODUCT MODULES
 -- =========================================================================================
 
+-- --- MODULE D: LIFE (The Whos, The Whys, The Wheres) ---
+
+-- 14. LIFE_LOVES (The Whos)
+CREATE TABLE IF NOT EXISTS life_loves (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES sys_users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    relationship TEXT, -- 'family', 'friend', 'mentor', 'partner'
+    birthday DATE,
+    contact_info JSONB, -- { "email": "...", "phone": "..." }
+    avatar_url TEXT,
+    notes TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 15. LIFE_PURPOSES (The Whys)
+CREATE TABLE IF NOT EXISTS life_purposes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES sys_users(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    description TEXT,
+    type TEXT, -- 'value', 'mission', 'vision'
+    importance INT DEFAULT 1, -- 1-5 scale
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 15b. LIFE_PURPOSE_LOVES (Association between Purposes and Loves)
+CREATE TABLE IF NOT EXISTS life_purpose_loves (
+    purpose_id UUID NOT NULL REFERENCES life_purposes(id) ON DELETE CASCADE,
+    love_id UUID NOT NULL REFERENCES life_loves(id) ON DELETE CASCADE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    PRIMARY KEY (purpose_id, love_id)
+);
+CREATE INDEX IF NOT EXISTS idx_purpose_loves_purpose ON life_purpose_loves(purpose_id);
+CREATE INDEX IF NOT EXISTS idx_purpose_loves_love ON life_purpose_loves(love_id);
+
+-- 16. LIFE_PINS (The Wheres)
+CREATE TABLE IF NOT EXISTS life_pins (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES sys_users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    address TEXT,
+    coordinates POINT, -- PostGIS or simple point (x,y)
+    type TEXT, -- 'home', 'work', 'travel', 'favorite'
+    notes TEXT,
+    image_url TEXT,
+    visited_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 17. LIFE_LOVE_PINS (Association between Loves and Pins)
+CREATE TABLE IF NOT EXISTS life_love_pins (
+    love_id UUID NOT NULL REFERENCES life_loves(id) ON DELETE CASCADE,
+    pin_id UUID NOT NULL REFERENCES life_pins(id) ON DELETE CASCADE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    PRIMARY KEY (love_id, pin_id)
+);
+
 -- --- MODULE A: PROJECT MANAGEMENT (PM) ---
 
 -- 5. PM_GOALS
@@ -230,66 +291,7 @@ CREATE TABLE IF NOT EXISTS crm_opportunities (
 
 
 
--- --- MODULE D: LIFE (The Whos, The Whys, The Wheres) ---
 
--- 14. LIFE_LOVES (The Whos)
-CREATE TABLE IF NOT EXISTS life_loves (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES sys_users(id) ON DELETE CASCADE,
-    name TEXT NOT NULL,
-    relationship TEXT, -- 'family', 'friend', 'mentor', 'partner'
-    birthday DATE,
-    contact_info JSONB, -- { "email": "...", "phone": "..." }
-    avatar_url TEXT,
-    notes TEXT,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
--- 15. LIFE_PURPOSES (The Whys)
-CREATE TABLE IF NOT EXISTS life_purposes (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES sys_users(id) ON DELETE CASCADE,
-    title TEXT NOT NULL,
-    description TEXT,
-    type TEXT, -- 'value', 'mission', 'vision'
-    importance INT DEFAULT 1, -- 1-5 scale
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
--- 15b. LIFE_PURPOSE_LOVES (Association between Purposes and Loves)
-CREATE TABLE IF NOT EXISTS life_purpose_loves (
-    purpose_id UUID NOT NULL REFERENCES life_purposes(id) ON DELETE CASCADE,
-    love_id UUID NOT NULL REFERENCES life_loves(id) ON DELETE CASCADE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    PRIMARY KEY (purpose_id, love_id)
-);
-CREATE INDEX IF NOT EXISTS idx_purpose_loves_purpose ON life_purpose_loves(purpose_id);
-CREATE INDEX IF NOT EXISTS idx_purpose_loves_love ON life_purpose_loves(love_id);
-
--- 16. LIFE_PINS (The Wheres)
-CREATE TABLE IF NOT EXISTS life_pins (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES sys_users(id) ON DELETE CASCADE,
-    name TEXT NOT NULL,
-    address TEXT,
-    coordinates POINT, -- PostGIS or simple point (x,y)
-    type TEXT, -- 'home', 'work', 'travel', 'favorite'
-    notes TEXT,
-    image_url TEXT,
-    visited_at TIMESTAMP WITH TIME ZONE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
--- 17. LIFE_LOVE_PINS (Association between Loves and Pins)
-CREATE TABLE IF NOT EXISTS life_love_pins (
-    love_id UUID NOT NULL REFERENCES life_loves(id) ON DELETE CASCADE,
-    pin_id UUID NOT NULL REFERENCES life_pins(id) ON DELETE CASCADE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    PRIMARY KEY (love_id, pin_id)
-);
 
 -- IV. THE INTERACTION LAYER
 -- =========================================================================================
