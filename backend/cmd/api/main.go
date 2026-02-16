@@ -95,10 +95,23 @@ func main() {
 	r.Use(rateLimiter.Middleware)
 
 	// CORS
-	allowedOrigins := strings.Split(os.Getenv("ALLOWED_ORIGINS"), ",")
-	if len(allowedOrigins) == 0 || allowedOrigins[0] == "" {
+	// CORS
+	originsRaw := os.Getenv("ALLOWED_ORIGINS")
+	var allowedOrigins []string
+	if originsRaw != "" {
+		for _, o := range strings.Split(originsRaw, ",") {
+			trimmed := strings.TrimSpace(o)
+			if trimmed != "" {
+				allowedOrigins = append(allowedOrigins, trimmed)
+			}
+		}
+	}
+	if len(allowedOrigins) == 0 {
 		allowedOrigins = []string{"http://localhost:5173", "http://localhost:3001", "http://localhost:3000"}
 	}
+	
+	// Log origins for debugging
+	log.Printf("CORS Allowed Origins: %v", allowedOrigins)
 
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   allowedOrigins,
