@@ -11,11 +11,10 @@ RUN npm ci
 # Copy source code
 COPY . .
 
+# Set API URL for production build
+ENV NEXT_PUBLIC_API_URL=https://www.magnistruct.com/api
+
 # Build the application
-# Note: Ensure your next.config.ts supports standalone output if you want a smaller image,
-# or just use the standard build and start with next start.
-# For Docker, standalone is often preferred, but requires configuration.
-# We'll use the standard start for simplicity unless size is critical.
 RUN npm run build
 
 # Run stage
