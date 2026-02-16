@@ -48,12 +48,27 @@ func main() {
 	awareness.Init()
 
 	// INIT SERVICES
-	// MinIO Config (Hardcoded for dev, normally from env)
-	minioEndpoint := "localhost:9000"
-	minioAccessKey := "admin"
-	minioSecretKey := "password"
-	minioBucket := "magnistruct-uploads"
-	minioBaseURL := "http://localhost:9000"
+	// MinIO Config
+	minioEndpoint := os.Getenv("MINIO_ENDPOINT")
+	if minioEndpoint == "" {
+		minioEndpoint = "localhost:9000" // Fallback for local dev
+	}
+	minioAccessKey := os.Getenv("MINIO_ACCESS_KEY")
+	if minioAccessKey == "" {
+		minioAccessKey = "minioadmin"
+	}
+	minioSecretKey := os.Getenv("MINIO_SECRET_KEY")
+	if minioSecretKey == "" {
+		minioSecretKey = "minioadmin"
+	}
+	minioBucket := os.Getenv("MINIO_BUCKET_NAME")
+	if minioBucket == "" {
+		minioBucket = "magnistruct-uploads"
+	}
+	minioBaseURL := os.Getenv("MINIO_PUBLIC_URL") // Optional public URL
+	if minioBaseURL == "" {
+		minioBaseURL = "http://" + minioEndpoint
+	}
 
 	filesService, err := files.NewService(database.DB, minioEndpoint, minioAccessKey, minioSecretKey, minioBucket, minioBaseURL)
 	if err != nil {
