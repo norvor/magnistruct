@@ -66,7 +66,7 @@ services:
       - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
       - MINIO_USE_SSL=false
       - MINIO_BUCKET_NAME=${MINIO_BUCKET_NAME:-magnistruct-uploads}
-      - ALLOWED_ORIGINS=http://localhost:3001
+      - ALLOWED_ORIGINS=http://localhost:3001,https://magnistruct.com,https://www.magnistruct.com
     depends_on:
       db:
         condition: service_healthy
